@@ -73,7 +73,7 @@ http://127.0.0.1:8042/admin
 ## Docker
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 ## 项目结构
