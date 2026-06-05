@@ -24,10 +24,6 @@ jobs:
             target: linux-x64
             suffix: ""
             sep: ":"
-          - os: macos-13
-            target: macos-x64
-            suffix: ""
-            sep: ":"
           - os: macos-latest
             target: macos-arm64
             suffix: ""
@@ -53,6 +49,9 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
+      - name: Prepare config.yaml from example
+        run: cp config.example.yaml config.yaml
+
       - name: Build with PyInstaller
         run: >
           pyinstaller --onefile
@@ -67,7 +66,18 @@ jobs:
           --hidden-import uvicorn.protocols.http.auto
           --hidden-import uvicorn.protocols.websockets.auto
           --hidden-import jinja2.ext
-          --collect-data app
+          --hidden-import app.main
+          --hidden-import app.config
+          --hidden-import app.schemas
+          --hidden-import app.proxy
+          --hidden-import app.vision
+          --hidden-import app.image_utils
+          --hidden-import app.providers
+          --hidden-import app.auth
+          --hidden-import app.admin
+          --hidden-import app.stats
+          --hidden-import app.errors
+          --hidden-import app.image_cache
           run.py
 
       - name: Upload artifact
@@ -122,15 +132,12 @@ jobs:
             | 平台 | 文件 |
             |------|------|
             | Linux x64 | `grassvision-linux-x64` |
-            | macOS x64 (Intel) | `grassvision-macos-x64` |
             | macOS ARM64 (Apple Silicon) | `grassvision-macos-arm64` |
             | Windows x64 | `grassvision-windows-x64.exe` |
 
             ### 使用
 
             下载对应平台的可执行文件，直接运行即可启动服务。
-
-            > **macOS 用户首次运行**：如果系统提示"未识别的开发者"，需在「系统设置 → 隐私与安全性」中允许运行，或执行 `chmod +x grassvision-*` 后通过右键打开。
           prerelease: true
           fail_on_unmatched_files: false
           files: release-assets/*
