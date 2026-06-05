@@ -1,0 +1,136 @@
+name: Build & Pre-release
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag override (e.g., v1.2.3)"
+        required: false
+        default: ""
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x64
+            suffix: ""
+            sep: ":"
+          - os: macos-13
+            target: macos-x64
+            suffix: ""
+            sep: ":"
+          - os: macos-latest
+            target: macos-arm64
+            suffix: ""
+            sep: ":"
+          - os: windows-latest
+            target: windows-x64
+            suffix: ".exe"
+            sep: ";"
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build with PyInstaller
+        run: >
+          pyinstaller --onefile
+          --name grassvision-${{ matrix.target }}
+          --add-data "templates${{ matrix.sep }}templates"
+          --add-data "static${{ matrix.sep }}static"
+          --add-data "config${{ matrix.sep }}config"
+          --add-data "config.yaml${{ matrix.sep }}."
+          --add-data ".env${{ matrix.sep }}."
+          --hidden-import uvicorn.logging
+          --hidden-import uvicorn.loops.auto
+          --hidden-import uvicorn.protocols.http.auto
+          --hidden-import uvicorn.protocols.websockets.auto
+          --hidden-import jinja2.ext
+          --collect-data app
+          run.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: grassvision-${{ matrix.target }}
+          path: dist/grassvision-${{ matrix.target }}${{ matrix.suffix }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist-artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+          find dist-artifacts -type f -exec cp {} release-assets/ \;
+          chmod +x release-assets/* 2>/dev/null || true
+          echo "=== Release assets ==="
+          ls -lh release-assets/
+
+      - name: Generate tag
+        id: tag
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            echo "tag=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=nightly-$(date +'%Y%m%d-%H%M%S')" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create Pre-release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: "GrassVision ${{ steps.tag.outputs.tag }}"
+          body: |
+            ## GrassVision ${{ steps.tag.outputs.tag }}
+
+            ⚠️ **Pre-release** — 自动构建，未充分测试。
+
+            ### 下载
+
+            | 平台 | 文件 |
+            |------|------|
+            | Linux x64 | `grassvision-linux-x64` |
+            | macOS x64 (Intel) | `grassvision-macos-x64` |
+            | macOS ARM64 (Apple Silicon) | `grassvision-macos-arm64` |
+            | Windows x64 | `grassvision-windows-x64.exe` |
+
+            ### 使用
+
+            下载对应平台的可执行文件，直接运行即可启动服务。
+
+            > **macOS 用户首次运行**：如果系统提示"未识别的开发者"，需在「系统设置 → 隐私与安全性」中允许运行，或执行 `chmod +x grassvision-*` 后通过右键打开。
+          prerelease: true
+          fail_on_unmatched_files: false
+          files: release-assets/*

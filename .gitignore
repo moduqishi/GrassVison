@@ -36,3 +36,7 @@ config/backups/
 
 # Real config (user-modified, not the example)
 config.yaml
+
+# PyInstaller build artifacts
+dist/
+*.spec
