@@ -135,10 +135,12 @@ async def resolve_image_descriptions(
     historical_cache_miss: str = "analyze",
     request_client: httpx.AsyncClient | None = None,
     user_question: str = "",
-) -> dict[ImagePosition, str]:
+) -> tuple[dict[ImagePosition, str], dict]:
     """
     Main entry point for resolving all image descriptions.
-    Returns {ImagePosition: description_text} for every image position.
+    Returns (descriptions, vision_usage) where:
+      - descriptions: {ImagePosition: description_text} for every image position
+      - vision_usage: accumulated token usage from all vision model calls
 
     - Only positions in allow_analysis_positions trigger NEW vision calls.
     - Historical images with cache misses are handled per historical_cache_miss.
@@ -147,9 +149,10 @@ async def resolve_image_descriptions(
     cfg = get_config()
     cache = get_image_cache()
     descriptions: dict[ImagePosition, str] = {}
+    vision_usage: dict = {}
 
     if not images:
-        return descriptions
+        return descriptions, vision_usage
 
     # Resolve prompts
     vision_prompt_path = model_config.vision_prompt
@@ -250,6 +253,12 @@ async def resolve_image_descriptions(
                     url_results[url] = result["result"]
                     url_to_status[url] = "new"
 
+                    # Accumulate vision token usage
+                    if result.get("token_usage"):
+                        for k, v in result["token_usage"].items():
+                            if isinstance(v, (int, float)):
+                                vision_usage[k] = vision_usage.get(k, 0) + v
+
                     # Write to cache if enabled
                     if is_cache_enabled:
                         now = time.monotonic()
@@ -306,7 +315,7 @@ async def resolve_image_descriptions(
         for img in img_list:
             descriptions[img.position] = result_text
 
-    return descriptions
+    return descriptions, vision_usage
 
 
 async def analyze_images(

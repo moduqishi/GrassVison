@@ -95,18 +95,34 @@ async def handle_chat_completion(
     if not all_images or not model.vision_enabled:
         # No images or vision disabled → forward directly
         body = _build_source_body(request, model, messages_raw)
-        resp, source_usage = await _forward_to_source(
-            body=body,
-            provider_key=model.source_provider,
-            public_model_id=request.model if model.replace_response_model else model.source_model,
-            stream=request.stream,
-        )
-        stats_tracker.record_call(
-            model=request.model, images=0,
-            stream=request.stream, elapsed=0,
-            vision_used=False, vision_success=False,
-            source_tokens=source_usage,
-        )
+        if request.stream:
+            def _on_noimg_usage(usage):
+                stats_tracker.record_call(
+                    model=request.model, images=0,
+                    stream=True, elapsed=0,
+                    vision_used=False, vision_success=False,
+                    source_tokens=usage,
+                )
+            resp, _ = await _forward_to_source(
+                body=body,
+                provider_key=model.source_provider,
+                public_model_id=request.model if model.replace_response_model else model.source_model,
+                stream=True,
+                on_usage=_on_noimg_usage,
+            )
+        else:
+            resp, source_usage = await _forward_to_source(
+                body=body,
+                provider_key=model.source_provider,
+                public_model_id=request.model if model.replace_response_model else model.source_model,
+                stream=False,
+            )
+            stats_tracker.record_call(
+                model=request.model, images=0,
+                stream=request.stream, elapsed=0,
+                vision_used=False, vision_success=False,
+                source_tokens=source_usage,
+            )
         return resp
 
     # ── 2. Determine which images can trigger NEW analysis ───────
@@ -118,7 +134,7 @@ async def handle_chat_completion(
 
     # ── 3. Resolve all image descriptions (cache + vision calls) ─
     try:
-        descriptions = await resolve_image_descriptions(
+        descriptions, vision_usage = await resolve_image_descriptions(
             images=all_images,
             model_config=model,
             allow_analysis_positions=current_positions,
@@ -129,18 +145,36 @@ async def handle_chat_completion(
     except VisionAnalysisError as e:
         if model.vision_failure_mode == "skip":
             body = _build_source_body(request, model, messages_raw)
-            resp, source_usage = await _forward_to_source(
-                body=body,
-                provider_key=model.source_provider,
-                public_model_id=request.model if model.replace_response_model else model.source_model,
-                stream=request.stream,
-            )
-            stats_tracker.record_call(
-                model=request.model, images=len(all_images),
-                stream=request.stream, elapsed=0,
-                vision_used=True, vision_success=False,
-                source_tokens=source_usage,
-            )
+            if request.stream:
+                def _on_skip_usage(usage):
+                    stats_tracker.record_call(
+                        model=request.model, images=len(all_images),
+                        stream=True, elapsed=0,
+                        vision_used=True, vision_success=False,
+                        vision_tokens=None,
+                        source_tokens=usage,
+                    )
+                resp, _ = await _forward_to_source(
+                    body=body,
+                    provider_key=model.source_provider,
+                    public_model_id=request.model if model.replace_response_model else model.source_model,
+                    stream=True,
+                    on_usage=_on_skip_usage,
+                )
+            else:
+                resp, source_usage = await _forward_to_source(
+                    body=body,
+                    provider_key=model.source_provider,
+                    public_model_id=request.model if model.replace_response_model else model.source_model,
+                    stream=False,
+                )
+                stats_tracker.record_call(
+                    model=request.model, images=len(all_images),
+                    stream=request.stream, elapsed=0,
+                    vision_used=True, vision_success=False,
+                    vision_tokens=None,
+                    source_tokens=source_usage,
+                )
             return resp
         return _openai_error_response(502, f"Vision analysis failed: {e.message}")
 
@@ -166,19 +200,39 @@ async def handle_chat_completion(
 
     # ── 7. Forward to source model ──────────────────────────────
     body = _build_source_body(request, model, enhanced_messages)
-    resp, source_usage = await _forward_to_source(
-        body=body,
-        provider_key=model.source_provider,
-        public_model_id=request.model if model.replace_response_model else model.source_model,
-        stream=request.stream,
-    )
 
-    stats_tracker.record_call(
-        model=request.model, images=len(all_images),
-        stream=request.stream, elapsed=0,
-        vision_used=True, vision_success=True,
-        source_tokens=source_usage,
-    )
+    if request.stream:
+        # For streaming, source token usage is captured asynchronously via callback
+        def _on_source_usage(usage):
+            stats_tracker.record_call(
+                model=request.model, images=len(all_images),
+                stream=True, elapsed=0,
+                vision_used=True, vision_success=True,
+                vision_tokens=vision_usage if vision_usage else None,
+                source_tokens=usage,
+            )
+
+        resp, _ = await _forward_to_source(
+            body=body,
+            provider_key=model.source_provider,
+            public_model_id=request.model if model.replace_response_model else model.source_model,
+            stream=True,
+            on_usage=_on_source_usage,
+        )
+    else:
+        resp, source_usage = await _forward_to_source(
+            body=body,
+            provider_key=model.source_provider,
+            public_model_id=request.model if model.replace_response_model else model.source_model,
+            stream=False,
+        )
+        stats_tracker.record_call(
+            model=request.model, images=len(all_images),
+            stream=request.stream, elapsed=0,
+            vision_used=True, vision_success=True,
+            vision_tokens=vision_usage if vision_usage else None,
+            source_tokens=source_usage,
+        )
 
     return resp
 
@@ -188,6 +242,7 @@ async def _forward_to_source(
     provider_key: str,
     public_model_id: str,
     stream: bool = False,
+    on_usage: callable | None = None,
 ) -> tuple[JSONResponse | StreamingResponse, dict | None]:
     cfg = get_config()
     provider = cfg.source_providers.get(provider_key)
@@ -243,6 +298,8 @@ async def _forward_to_source(
                         u = _extract_usage_from_chunk(data_str)
                         if u:
                             usage_holder[0] = u
+                            if on_usage:
+                                on_usage(u)
                         if first_chunk:
                             line = _sanitize_stream_chunk(line, public_model_id, True)
                             first_chunk = False
