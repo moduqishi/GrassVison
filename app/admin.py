@@ -35,6 +35,31 @@ _env = Environment(
 templates = Jinja2Templates(env=_env)
 
 
+# ── Cache reconfig helper ─────────────────────────────────────
+
+def _reconfigure_cache_if_changed(old_cache: dict, new_cache_config) -> None:
+    """Call ImageCache.reconfigure() only when cache config fields changed."""
+    import asyncio
+    from app.image_cache import get_image_cache
+    try:
+        cache = get_image_cache()
+        new_enabled = new_cache_config.enabled
+        new_ttl = new_cache_config.ttl_seconds
+        new_max = new_cache_config.max_entries
+        changed = (
+            old_cache.get("enabled") != new_enabled or
+            old_cache.get("ttl_seconds") != new_ttl or
+            old_cache.get("max_entries") != new_max
+        )
+        if changed:
+            asyncio.create_task(cache.reconfigure(
+                enabled=new_enabled,
+                ttl_seconds=new_ttl,
+                max_entries=new_max,
+            ))
+    except Exception:
+        pass  # best-effort, don't break config reload
+
 def _render(request: Request, name: str, context: dict | None = None) -> HTMLResponse:
     ctx = {"request": request}
     if context:
@@ -405,6 +430,7 @@ async def settings_page(request: Request):
 @router.put("/api/admin/settings")
 async def update_settings(data: dict):
     cfg = get_config()
+    old_cache = cfg.image.vision_cache.model_dump() if cfg else {}
     if "server" in data:
         cfg.server = ServerConfig(**data["server"])
     if "admin" in data:
@@ -416,6 +442,10 @@ async def update_settings(data: dict):
         cfg.logging = LoggingConfig(**data["logging"])
     save_config(cfg)
     reload_config()
+    # Reconfigure cache only if cache config actually changed
+    from app.image_cache import get_image_cache as _get_cache
+    new_cache = cfg.image.vision_cache
+    _reconfigure_cache_if_changed(old_cache, new_cache)
     needs_restart = "server" in data
     return {"ok": True, "needs_restart": needs_restart}
 
@@ -445,7 +475,11 @@ async def save_yaml_config(data: dict):
 
 @router.post("/api/admin/reload")
 async def api_reload_config():
+    cfg = get_config()
+    old_cache = cfg.image.vision_cache.model_dump() if cfg else {}
     reload_config()
+    from app.image_cache import get_image_cache as _get_cache
+    _reconfigure_cache_if_changed(old_cache, get_config().image.vision_cache)
     return {"ok": True}
 
 
@@ -501,15 +535,20 @@ async def stats_page(request: Request):
 
 @router.get("/api/admin/stats")
 async def api_stats():
-    """Return usage statistics summary and recent call history."""
+    """Return usage statistics summary, recent call history, and cache stats."""
     s = get_stats()
+    from app.image_cache import get_image_cache as _get_cache
+    cache_stats = await _get_cache().stats()
     return {
         "summary": s.summary(),
         "recent_calls": s.recent_calls(50),
+        "cache": cache_stats,
     }
 
 
 @router.post("/api/admin/stats/reset")
 async def api_reset_stats():
     get_stats().reset()
+    from app.image_cache import get_image_cache as _get_cache
+    await _get_cache().clear()
     return {"ok": True}

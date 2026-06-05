@@ -27,6 +27,14 @@
             </div>
             <div class="form-group"><label><input type="checkbox" x-model="form.image.allow_private_network"> 允许访问局域网图片</label></div>
         </div>
+        <div class="card"><h3>图片缓存</h3>
+            <div class="form-group"><label><input type="checkbox" x-model="form.image.vision_cache.enabled"> 启用缓存</label></div>
+            <div class="form-row">
+                <div class="form-group"><label>缓存有效期 (秒)</label><input class="input" x-model.number="form.image.vision_cache.ttl_seconds" type="number"><p class="hint">默认 3600</p></div>
+                <div class="form-group"><label>最大条目</label><input class="input" x-model.number="form.image.vision_cache.max_entries" type="number"><p class="hint">默认 200</p></div>
+            </div>
+            <div class="form-group"><label>历史图片缺失策略</label><select class="input" x-model="form.image.historical_cache_miss"><option value="analyze">重新分析</option><option value="drop">移除图片</option><option value="error">返回错误</option></select></div>
+        </div>
         <div class="card"><h3>日志</h3>
             <div class="form-group"><label>日志级别</label><select class="input" x-model="form.logging.level"><option value="DEBUG">DEBUG</option><option value="INFO">INFO</option><option value="WARNING">WARNING</option><option value="ERROR">ERROR</option></select></div>
             <div class="form-group"><label>日志文件</label><input class="input" x-model="form.logging.file"></div>

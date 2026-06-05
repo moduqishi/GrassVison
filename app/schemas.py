@@ -39,6 +39,7 @@ class EnhancedModelConfig(BaseModel):
     vision_prompt: str = "prompts/default.txt"
     vision_failure_mode: Literal["error", "skip"] = "error"
     replace_response_model: bool = True
+    cache_prompt: str | None = None
 
 
 class ServerConfig(BaseModel):
@@ -56,6 +57,14 @@ class AdminConfig(BaseModel):
     password: str = ""
 
 
+class VisionCacheConfig(BaseModel):
+    model_config = {"extra": "ignore"}
+    enabled: bool = True
+    ttl_seconds: int = 3600
+    max_entries: int = 200
+    default_prompt: str = "prompts/cache.txt"
+
+
 class ImageConfig(BaseModel):
     model_config = {"extra": "ignore"}
     max_images: int = 5
@@ -65,7 +74,11 @@ class ImageConfig(BaseModel):
     max_height: int = 4096
     download_timeout: int = 20
     allow_private_network: bool = False
-    multi_image_mode: str = "together"
+    multi_image_mode: str = "independent"
+    analysis_scope: str = "latest_user_message"
+    historical_cache_miss: Literal["analyze", "drop", "error"] = "analyze"
+    comparison_strategy: str = "source_model"
+    vision_cache: VisionCacheConfig = Field(default_factory=VisionCacheConfig)
 
 
 class LoggingConfig(BaseModel):

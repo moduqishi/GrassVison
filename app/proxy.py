@@ -12,15 +12,21 @@ from fastapi.responses import StreamingResponse, JSONResponse
 
 from app.config import get_config
 from app.errors import ModelNotFoundError, VisionAnalysisError, ProviderError
-from app.image_utils import extract_images_from_messages, remove_image_content
+from app.image_utils import (
+    ExtractedImage,
+    extract_all_images_with_positions,
+    extract_images_from_last_user_message,
+    inject_image_descriptions,
+    assert_no_image_url_blocks,
+    extract_user_question,
+)
 from app.providers import get_source_client
 from app.schemas import ChatCompletionRequest, EnhancedModelConfig
 from app.stats import get_stats
-from app.vision import analyze_images, prepare_enhanced_messages
+from app.vision import resolve_image_descriptions, _merge_and_number_descriptions, _build_injection_text
 
 
 def _find_model(model_id: str) -> EnhancedModelConfig:
-    """Find and validate an enhanced model by its public ID."""
     cfg = get_config()
     model = cfg.models.get(model_id)
     if not model or not model.enabled:
@@ -28,10 +34,10 @@ def _find_model(model_id: str) -> EnhancedModelConfig:
     return model
 
 
-def _build_source_body(request: ChatCompletionRequest, model: EnhancedModelConfig) -> dict:
+def _build_source_body(request: ChatCompletionRequest, model: EnhancedModelConfig, messages: list[dict]) -> dict:
     body = {
         "model": model.source_model,
-        "messages": [m.model_dump(exclude_none=True) for m in request.messages],
+        "messages": messages,
         "stream": request.stream,
     }
     for key in ("temperature", "top_p", "max_tokens", "tools", "tool_choice",
@@ -57,7 +63,6 @@ def _sanitize_stream_chunk(chunk_text: str, public_model_id: str, is_first: bool
 
 
 def _extract_usage_from_chunk(data_str: str) -> dict | None:
-    """Try extracting token usage from a non-[DONE] SSE chunk."""
     try:
         if not data_str or data_str == "[DONE]":
             return None
@@ -80,88 +85,102 @@ async def handle_chat_completion(
 ) -> JSONResponse | StreamingResponse:
     cfg = get_config()
     model = _find_model(request.model)
-    stats = get_stats()
+    stats_tracker = get_stats()
 
-    images = extract_images_from_messages(
-        [m.model_dump(exclude_none=True) for m in request.messages]
-    )
-    has_images = len(images) > 0 and model.vision_enabled
-    image_count = len(images)
+    messages_raw = [m.model_dump(exclude_none=True) for m in request.messages]
 
-    vision_used = False
-    vision_success = False
-    vision_token_usage = None
-    source_token_usage = None
+    # ── 1. Extract all images with positions ─────────────────────
+    all_images = extract_all_images_with_positions(messages_raw)
 
-    if not has_images:
-        response, source_token_usage = await _forward_text(request, model)
-    else:
-        if len(images) > cfg.image.max_images:
-            return _openai_error_response(400, f"Too many images: {len(images)} > {cfg.image.max_images}")
-
-        image_urls = [img["url"] for img in images]
-        vision_used = True
-
-        try:
-            vision_ctx = await analyze_images(
-                messages=[m.model_dump(exclude_none=True) for m in request.messages],
-                image_urls=image_urls,
-                vision_provider_key=model.vision_provider,
-                vision_model=model.vision_model,
-                vision_prompt=model.vision_prompt,
-                request_client=getattr(raw_request, "_httpx_client", None),
-            )
-            vision_success = True
-            vision_token_usage = vision_ctx.get("token_usage") or {}
-        except VisionAnalysisError as e:
-            if model.vision_failure_mode == "skip":
-                response, source_token_usage = await _forward_text(request, model)
-                stats.record_call(
-                    model=request.model, images=image_count,
-                    stream=request.stream, elapsed=0,
-                    vision_used=True, vision_success=False,
-                )
-                return response
-            return _openai_error_response(502, f"Vision analysis failed: {e.message}")
-
-        enhanced_messages = prepare_enhanced_messages(
-            messages=[m.model_dump(exclude_none=True) for m in request.messages],
-            vision_result=vision_ctx["result"],
-        )
-
-        body = _build_source_body(request, model)
-        body["messages"] = enhanced_messages
-        response, source_token_usage = await _forward_to_source(
+    if not all_images or not model.vision_enabled:
+        # No images or vision disabled → forward directly
+        body = _build_source_body(request, model, messages_raw)
+        resp, source_usage = await _forward_to_source(
             body=body,
             provider_key=model.source_provider,
             public_model_id=request.model if model.replace_response_model else model.source_model,
             stream=request.stream,
         )
+        stats_tracker.record_call(
+            model=request.model, images=0,
+            stream=request.stream, elapsed=0,
+            vision_used=False, vision_success=False,
+            source_tokens=source_usage,
+        )
+        return resp
 
-    # Record usage statistics
-    elapsed_total = time.time()  # approximate
-    stats.record_call(
-        model=request.model, images=image_count,
-        stream=request.stream, elapsed=0,
-        vision_used=vision_used, vision_success=vision_success,
-        vision_tokens=vision_token_usage,
-        source_tokens=source_token_usage,
-    )
+    # ── 2. Determine which images can trigger NEW analysis ───────
+    current_positions = extract_images_from_last_user_message(messages_raw)
 
-    return response
+    # Validate image count
+    if len(all_images) > cfg.image.max_images:
+        return _openai_error_response(400, f"Too many images: {len(all_images)} > {cfg.image.max_images}")
 
+    # ── 3. Resolve all image descriptions (cache + vision calls) ─
+    try:
+        descriptions = await resolve_image_descriptions(
+            images=all_images,
+            model_config=model,
+            allow_analysis_positions=current_positions,
+            historical_cache_miss=cfg.image.historical_cache_miss,
+            request_client=getattr(raw_request, "_httpx_client", None),
+            user_question=extract_user_question(messages_raw),
+        )
+    except VisionAnalysisError as e:
+        if model.vision_failure_mode == "skip":
+            body = _build_source_body(request, model, messages_raw)
+            resp, source_usage = await _forward_to_source(
+                body=body,
+                provider_key=model.source_provider,
+                public_model_id=request.model if model.replace_response_model else model.source_model,
+                stream=request.stream,
+            )
+            stats_tracker.record_call(
+                model=request.model, images=len(all_images),
+                stream=request.stream, elapsed=0,
+                vision_used=True, vision_success=False,
+                source_tokens=source_usage,
+            )
+            return resp
+        return _openai_error_response(502, f"Vision analysis failed: {e.message}")
 
-async def _forward_text(
-    request: ChatCompletionRequest,
-    model: EnhancedModelConfig,
-) -> tuple[JSONResponse | StreamingResponse, dict | None]:
-    body = _build_source_body(request, model)
-    return await _forward_to_source(
+    # ── 4. Inject descriptions into messages ─────────────────────
+    enhanced_messages = inject_image_descriptions(messages_raw, descriptions)
+
+    # ── 5. Merge and inject vision context into last user msg ────
+    merged = _merge_and_number_descriptions(descriptions)
+    injection = _build_injection_text(merged)
+
+    # Append injection to the last user message
+    for i in range(len(enhanced_messages) - 1, -1, -1):
+        if enhanced_messages[i].get("role") == "user":
+            content = enhanced_messages[i].get("content")
+            if isinstance(content, str):
+                enhanced_messages[i]["content"] = f"{content}\n\n{injection}"
+            elif isinstance(content, list):
+                enhanced_messages[i]["content"] = list(content) + [{"type": "text", "text": f"\n{injection}"}]
+            break
+
+    # ── 6. Assert no image_url blocks remain ────────────────────
+    assert_no_image_url_blocks(enhanced_messages)
+
+    # ── 7. Forward to source model ──────────────────────────────
+    body = _build_source_body(request, model, enhanced_messages)
+    resp, source_usage = await _forward_to_source(
         body=body,
         provider_key=model.source_provider,
         public_model_id=request.model if model.replace_response_model else model.source_model,
         stream=request.stream,
     )
+
+    stats_tracker.record_call(
+        model=request.model, images=len(all_images),
+        stream=request.stream, elapsed=0,
+        vision_used=True, vision_success=True,
+        source_tokens=source_usage,
+    )
+
+    return resp
 
 
 async def _forward_to_source(
@@ -194,7 +213,6 @@ async def _forward_to_source(
         finally:
             await client.aclose()
 
-    # Streaming: capture usage from the last chunk
     usage_holder: list[dict | None] = [None]
 
     async def _stream_with_tracking():
@@ -213,7 +231,6 @@ async def _forward_to_source(
                     yield f"data: {error_data}\n\n"
                     yield "data: [DONE]\n\n"
                     return
-
                 async for line in resp.aiter_lines():
                     if not line:
                         yield "\n"
@@ -223,7 +240,6 @@ async def _forward_to_source(
                         if data_str == "[DONE]":
                             yield "data: [DONE]\n\n"
                             continue
-                        # Track usage from last non-DONE chunk
                         u = _extract_usage_from_chunk(data_str)
                         if u:
                             usage_holder[0] = u
@@ -245,10 +261,7 @@ async def _forward_to_source(
         StreamingResponse(
             _stream_with_tracking(),
             media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-            },
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
         ),
-        usage_holder[0],  # may be None for streaming
+        usage_holder[0],
     )

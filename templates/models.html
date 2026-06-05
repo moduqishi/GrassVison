@@ -56,6 +56,7 @@
                     <p class="hint" x-text="visionModelCount"></p>
                 </div>
                 <div class="form-group"><label>视觉提示词</label><select class="input" x-model="form.vision_prompt"><template x-for="pf in promptFiles"><option :value="'prompts/'+pf" x-text="pf"></option></template></select></div>
+                <div class="form-group"><label>缓存提示词（可选）</label><input class="input" x-model="form.cache_prompt" placeholder="留空使用全局 prompts/cache.txt"><p class="hint">留空使用全局默认缓存提示词</p></div>
                 <div class="form-group"><label>失败处理</label><select class="input" x-model="form.vision_failure_mode"><option value="error">返回错误</option><option value="skip">跳过视觉继续</option></select></div>
                 <div class="form-group"><label><input type="checkbox" x-model="form.replace_response_model"> 替换响应模型 ID</label></div>
                 <div class="form-group"><label><input type="checkbox" x-model="form.enabled"> 启用</label></div>
@@ -71,7 +72,7 @@ function modelManager() {
         sourceKeys:{{ source_keys | tojson }}, visionKeys:{{ vision_keys | tojson }}, promptFiles:{{ prompt_files | tojson }},
         sourceModels:{}, visionModels:{}, sourceLoading:false, visionLoading:false,
 
-        form:{model_id:'',name:'',source_provider:'',source_model:'',vision_enabled:false,vision_provider:'',vision_model:'',vision_prompt:'prompts/default.txt',vision_failure_mode:'error',replace_response_model:true,enabled:true},
+        form:{model_id:'',name:'',source_provider:'',source_model:'',vision_enabled:false,vision_provider:'',vision_model:'',vision_prompt:'prompts/default.txt',cache_prompt:null,vision_failure_mode:'error',replace_response_model:true,enabled:true},
 
         get sourceModelCount(){
             const arr=this.sourceModels[this.form.source_provider];
@@ -83,7 +84,7 @@ function modelManager() {
         },
 
         async init(){ const d=await api('GET','/api/admin/models'); this.models=d.models||{}; },
-        openCreate(){ this.editing=false; this.form={model_id:'',name:'',source_provider:'',source_model:'',vision_enabled:false,vision_provider:'',vision_model:'',vision_prompt:'prompts/default.txt',vision_failure_mode:'error',replace_response_model:true,enabled:true}; this.showModal=true; },
+        openCreate(){ this.editing=false; this.form={model_id:'',name:'',source_provider:'',source_model:'',vision_enabled:false,vision_provider:'',vision_model:'',vision_prompt:'prompts/default.txt',cache_prompt:null,vision_failure_mode:'error',replace_response_model:true,enabled:true}; this.showModal=true; },
         editModel(key,m){ this.editing=true; this.form={model_id:key,...m}; this.showModal=true; },
         copyModel(key,m){ this.editing=false; this.form={model_id:key+'-copy',...m,model_id:key+'-copy'}; this.showModal=true; },
 

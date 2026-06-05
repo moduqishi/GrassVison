@@ -27,6 +27,45 @@
             <div class="stat-label">视觉 Token</div>
         </div>
     </div>
+    <!-- Cache stats -->
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-value" x-text="cacheData.hits || 0"></div>
+            <div class="stat-label">缓存命中</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" x-text="cacheData.misses || 0"></div>
+            <div class="stat-label">缓存未命中</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" x-text="(cacheData.hit_rate || 0) + '%'"></div>
+            <div class="stat-label">命中率</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" x-text="cacheData.vision_calls_saved || 0"></div>
+            <div class="stat-label">省去视觉调用</div>
+        </div>
+    </div>
+
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-value" x-text="cacheData.size || 0"></div>
+            <div class="stat-label">当前条目</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" x-text="cacheData.evictions || 0"></div>
+            <div class="stat-label">淘汰次数</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" x-text="cacheData.expired || 0"></div>
+            <div class="stat-label">过期条目</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" x-text="cacheData.max_entries || 0"></div>
+            <div class="stat-label">最大容量</div>
+        </div>
+    </div>
+
 
     <!-- Detail table -->
     <div class="card">
@@ -87,9 +126,9 @@
 <script>
 function statsView() {
     return {
-        summary:{}, recentCalls:[],
+        summary:{}, recentCalls:[], cacheData:{},
         async load(){
-            try{ const d=await api('GET','/api/admin/stats'); this.summary=d.summary; this.recentCalls=d.recent_calls||[]; }
+            try{ const d=await api('GET','/api/admin/stats'); this.summary=d.summary; this.recentCalls=d.recent_calls||[]; this.cacheData=d.cache||{}; }
             catch(e){ showToast('加载失败: '+e.message,'error'); }
         },
         async resetStats(){

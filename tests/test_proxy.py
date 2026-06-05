@@ -26,24 +26,27 @@ class TestBuildBody:
             temperature=0.7,
             max_tokens=100,
         )
+        messages = [{"role": "user", "content": "hello"}]
         model = EnhancedModelConfig(
             source_model="deepseek-chat",
             source_provider="deepseek",
             replace_response_model=True,
         )
-        body = _build_source_body(request, model)
+        body = _build_source_body(request, model, messages)
         assert body["model"] == "deepseek-chat"
         assert body["stream"] is False
         assert body["temperature"] == 0.7
         assert body["max_tokens"] == 100
+        assert body["messages"][0]["content"] == "hello"
 
     def test_omits_none_params(self):
         request = ChatCompletionRequest(
             model="deepseek-vision",
             messages=[ChatMessage(role="user", content="hi")],
         )
+        messages = [{"role": "user", "content": "hi"}]
         model = EnhancedModelConfig(source_model="deepseek-chat")
-        body = _build_source_body(request, model)
+        body = _build_source_body(request, model, messages)
         assert "temperature" not in body
         assert "top_p" not in body
         assert body["messages"][0]["role"] == "user"

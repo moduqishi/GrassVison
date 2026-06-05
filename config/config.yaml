@@ -8,45 +8,54 @@ admin:
   username: admin
   password: ${GRASSVISION_ADMIN_PASSWORD}
 source_providers:
-  deepseek:
-    name: DeepSeek
+  cpa:
+    name: cpa
     enabled: true
-    base_url: https://api.deepseek.com
-    api_key: ${DEEPSEEK_API_KEY}
+    base_url: ${CPA_BASE_URL}
+    api_key: ${CPA_API_KEY}
     timeout: 120
     headers: {}
 vision_providers:
-  vivo:
-    name: vivo
+  cpa:
+    name: cpa
     enabled: true
-    base_url: https://api-ai.vivo.com.cn/v1
-    api_key: ${VIVO_API_KEY}
-    model: Doubao-Seed-2.0-pro
+    base_url: ${CPA_BASE_URL}
+    api_key: ${CPA_API_KEY}
+    model: ''
     timeout: 120
-    max_images: 10
+    max_images: 5
     max_image_size_mb: 10
     headers: {}
 models:
-  deepseek-v4-pro-vison:
-    name: deepseek-v4-pro-vison
+  deepseek-v4-flash-free-vision:
+    name: deepseek-v4-flash-free-vision
     enabled: true
-    source_provider: deepseek
-    source_model: deepseek-v4-pro
+    source_provider: cpa
+    source_model: deepseek-v4-flash-free
     vision_enabled: true
-    vision_provider: vivo
+    vision_provider: cpa
     vision_model: Doubao-Seed-2.0-pro
     vision_prompt: prompts/default.txt
     vision_failure_mode: error
     replace_response_model: true
+    cache_prompt: null
 image:
-  max_images: 8
+  max_images: 5
   max_image_size_mb: 10
   max_total_size_mb: 30
   max_width: 4096
   max_height: 4096
   download_timeout: 20
   allow_private_network: false
-  multi_image_mode: together
+  multi_image_mode: independent
+  analysis_scope: latest_user_message
+  historical_cache_miss: drop
+  comparison_strategy: source_model
+  vision_cache:
+    enabled: true
+    ttl_seconds: 3600
+    max_entries: 200
+    default_prompt: prompts/cache.txt
 logging:
   level: INFO
   save_to_file: true
