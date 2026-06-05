@@ -1,44 +1,70 @@
+# GrassVision 配置示例
+# 复制此文件为 config.yaml 并按需修改
 server:
   host: 127.0.0.1
   port: 8042
   access_key: ''
   request_timeout: 180
+
 admin:
   enabled: true
   username: admin
-  password: ${GRASSVISION_ADMIN_PASSWORD}
+  password: admin123
+
 source_providers:
-  cpa:
-    name: cpa
+  openai:
+    name: openai
     enabled: true
-    base_url: ${CPA_BASE_URL}
-    api_key: ${CPA_API_KEY}
+    base_url: https://api.openai.com/v1
+    api_key: sk-your-openai-api-key
     timeout: 120
     headers: {}
+  # 可添加更多源渠道，例如：
+  # deepseek:
+  #   name: deepseek
+  #   enabled: true
+  #   base_url: https://api.deepseek.com/v1
+  #   api_key: sk-your-deepseek-key
+  #   timeout: 120
+  #   headers: {}
+
 vision_providers:
-  cpa:
-    name: cpa
+  openai:
+    name: openai
     enabled: true
-    base_url: ${CPA_BASE_URL}
-    api_key: ${CPA_API_KEY}
+    base_url: https://api.openai.com/v1
+    api_key: sk-your-openai-api-key
     model: ''
     timeout: 120
     max_images: 5
     max_image_size_mb: 10
     headers: {}
+  # 可添加更多视觉渠道，例如：
+  # glm:
+  #   name: glm
+  #   enabled: true
+  #   base_url: https://open.bigmodel.cn/api/paas/v4
+  #   api_key: your-glm-key
+  #   model: glm-4v-flash
+  #   timeout: 120
+  #   max_images: 5
+  #   max_image_size_mb: 10
+  #   headers: {}
+
 models:
-  deepseek-v4-flash-free-vision:
-    name: deepseek-v4-flash-free-vision
+  openai-vision:
+    name: openai-vision
     enabled: true
-    source_provider: cpa
-    source_model: deepseek-v4-flash-free
+    source_provider: openai
+    source_model: gpt-4o-mini
     vision_enabled: true
-    vision_provider: cpa
-    vision_model: Doubao-Seed-2.0-pro
+    vision_provider: openai
+    vision_model: gpt-4o-mini
     vision_prompt: prompts/default.txt
     vision_failure_mode: error
     replace_response_model: true
     cache_prompt: null
+
 image:
   max_images: 5
   max_image_size_mb: 10
@@ -56,6 +82,7 @@ image:
     ttl_seconds: 3600
     max_entries: 200
     default_prompt: prompts/cache.txt
+
 logging:
   level: INFO
   save_to_file: true

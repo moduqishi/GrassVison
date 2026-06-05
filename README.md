@@ -10,9 +10,9 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-# 2. 配置环境变量
-cp .env.example .env
-# 编辑 .env，填入实际的 API Key
+# 2. 配置
+cp config.example.yaml config.yaml
+# 编辑 config.yaml，填入实际的 API Key 和渠道信息
 
 # 3. 启动服务
 uvicorn app.main:app --host 127.0.0.1 --port 8042
@@ -52,7 +52,7 @@ http://127.0.0.1:8042/v1
 http://127.0.0.1:8042/admin
 ```
 
-默认用户名 `admin`，密码在 `.env` 中配置。
+默认用户名 `admin`，密码 `admin123`。
 
 功能：
 - 源渠道 CRUD + 连接测试
@@ -66,13 +66,22 @@ http://127.0.0.1:8042/admin
 
 ## 配置
 
-主配置文件 `config/config.yaml`，支持 `${ENV_VAR}` 引用 `.env`。
+主配置文件为项目根目录下的 `config.yaml`，所有参数自包含。
 
 保存配置时自动备份到 `config/backups/`，保留最近 10 份。使用原子写入，校验失败不破坏原配置。
 
 ## Docker
 
 ```bash
+# 首次启动
+docker compose up -d
+
+# 查看日志
+docker compose logs -f
+
+# 更新（代码或配置改动后）
+docker compose down
+docker compose build --no-cache
 docker compose up -d
 ```
 
@@ -92,7 +101,8 @@ GrassVision/
 │   └── admin.py      # 管理 API CRUD
 ├── templates/        # Jinja2 管理界面
 ├── static/css/       # 原生 CSS
-├── config/           # YAML 配置 + prompts + 备份
+├── config.yaml       # 主配置文件
+├── config/           # prompts + 备份
 ├── tests/            # 测试
 └── logs/             # 日志文件
 ```

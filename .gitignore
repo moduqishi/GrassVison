@@ -13,9 +13,6 @@ build/
 venv/
 env/
 
-# Environment
-.env
-
 # IDE
 .idea/
 .vscode/
@@ -37,5 +34,5 @@ config/backups/
 # Docker
 .docker/
 
-# Config (real file, use example as template)
-config/config.yaml
+# Real config (user-modified, not the example)
+config.yaml

@@ -1,8 +1,7 @@
 """Configuration loading, reloading, atomic write, and backup."""
 from __future__ import annotations
-
 import os
-import re
+
 import shutil
 import tempfile
 from datetime import datetime
@@ -25,7 +24,7 @@ from app.schemas import (
 )
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-CONFIG_PATH = BASE_DIR / "config" / "config.yaml"
+CONFIG_PATH = BASE_DIR / "config.yaml"
 BACKUP_DIR = BASE_DIR / "config" / "backups"
 PROMPTS_DIR = BASE_DIR / "config" / "prompts"
 MAX_BACKUPS = 10
@@ -33,24 +32,6 @@ MAX_BACKUPS = 10
 _config: AppConfig | None = None
 _config_loaded_at: datetime | None = None
 _config_error: str | None = None
-
-# Regex to resolve ${VAR} or ${VAR:default} references
-_VAR_RE = re.compile(r"\$\{(\w+)(?::([^}]*))?\}")
-
-
-def _resolve_env(value: Any) -> Any:
-    """Recursively resolve ${ENV_VAR} and ${ENV_VAR:default} in strings."""
-    if isinstance(value, str):
-        def _replace(m):
-            var = m.group(1)
-            default = m.group(2)
-            return os.environ.get(var, default if default is not None else m.group(0))
-        return _VAR_RE.sub(_replace, value)
-    if isinstance(value, dict):
-        return {k: _resolve_env(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_resolve_env(v) for v in value]
-    return value
 
 
 def load_config(reload: bool = False) -> AppConfig:
@@ -68,7 +49,6 @@ def load_config(reload: bool = False) -> AppConfig:
     if raw is None or not isinstance(raw, dict):
         raise ConfigError("Config file is empty or invalid YAML")
 
-    raw = _resolve_env(raw)
     _config = AppConfig(**raw)
     _config_loaded_at = datetime.now()
     _config_error = None
@@ -114,31 +94,22 @@ def backup_config() -> Path:
 
 
 def save_config(config: AppConfig) -> None:
-    """Atomically save config: backup → write .tmp → validate → replace."""
-    # Dump model to dict (with aliases preserved)
+    """Atomically save config: backup -> write .tmp -> validate -> replace."""
     raw = config.model_dump(exclude_none=False, mode="python")
-
-    # Resolve env vars back to placeholder form for clean YAML
-    # We keep the raw dict as-is since users may have literal keys
     yaml_str = yaml.dump(raw, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
-    # Create backup
     backup_config()
 
-    # Write to temp file
     fd, tmp_path = tempfile.mkstemp(suffix=".tmp", dir=CONFIG_PATH.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(yaml_str)
 
-        # Validate by loading
         with open(tmp_path, "r", encoding="utf-8") as f:
             yaml.safe_load(f)
 
-        # Atomic replace
         os.replace(tmp_path, CONFIG_PATH)
     except Exception:
-        # Clean up temp on failure
         Path(tmp_path).unlink(missing_ok=True)
         raise ConfigError("Failed to write config: validation error. Original config preserved.")
 
