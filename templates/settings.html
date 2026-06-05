@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}系统设置{% endblock %}
+{% block content %}
+<h1>⚙️ 系统设置</h1>
+<div x-data="settingsForm()">
+    <form @submit.prevent="saveSettings()">
+        <div class="card"><h3>服务</h3>
+            <div class="form-row"><div class="form-group"><label>监听地址</label><input class="input" x-model="form.server.host"><p class="hint">修改需重启生效</p></div>
+            <div class="form-group"><label>端口</label><input class="input" x-model.number="form.server.port" type="number"><p class="hint">修改需重启生效</p></div></div>
+            <div class="form-group"><label>访问密钥（可选）</label><input class="input" x-model="form.server.access_key" type="password"></div>
+            <div class="form-group"><label>请求超时 (秒)</label><input class="input" x-model.number="form.server.request_timeout" type="number"></div>
+        </div>
+        <div class="card"><h3>管理界面</h3>
+            <div class="form-row"><div class="form-group"><label>用户名</label><input class="input" x-model="form.admin.username"></div>
+            <div class="form-group"><label>密码（留空不修改）</label><input class="input" x-model="form.admin.password" type="password"></div></div>
+            <div class="form-group"><label><input type="checkbox" x-model="form.admin.enabled"> 启用管理界面</label></div>
+        </div>
+        <div class="card"><h3>图片限制</h3>
+            <div class="form-row">
+                <div class="form-group"><label>最大图片数</label><input class="input" x-model.number="form.image.max_images" type="number"></div>
+                <div class="form-group"><label>单张最大 (MB)</label><input class="input" x-model.number="form.image.max_image_size_mb" type="number"></div>
+                <div class="form-group"><label>总计最大 (MB)</label><input class="input" x-model.number="form.image.max_total_size_mb" type="number"></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label>最大宽度</label><input class="input" x-model.number="form.image.max_width" type="number"></div>
+                <div class="form-group"><label>最大高度</label><input class="input" x-model.number="form.image.max_height" type="number"></div>
+            </div>
+            <div class="form-group"><label><input type="checkbox" x-model="form.image.allow_private_network"> 允许访问局域网图片</label></div>
+        </div>
+        <div class="card"><h3>日志</h3>
+            <div class="form-group"><label>日志级别</label><select class="input" x-model="form.logging.level"><option value="DEBUG">DEBUG</option><option value="INFO">INFO</option><option value="WARNING">WARNING</option><option value="ERROR">ERROR</option></select></div>
+            <div class="form-group"><label>日志文件</label><input class="input" x-model="form.logging.file"></div>
+            <div class="form-group"><label><input type="checkbox" x-model="form.logging.save_to_file"> 保存到文件</label></div>
+        </div>
+        <div class="form-actions"><button type="submit" class="btn btn-primary">保存设置</button></div>
+        <p class="hint" x-show="needsRestart" style="color:#e74c3c">⚠️ 监听地址或端口已修改，需要重启服务生效</p>
+    </form>
+</div>
+<script>
+function settingsForm() {
+    return {
+        form: {
+            server: {{ config.server.model_dump() | tojson }},
+            admin: {{ config.admin.model_dump() | tojson }},
+            image: {{ config.image.model_dump() | tojson }},
+            logging: {{ config.logging.model_dump() | tojson }}
+        },
+        needsRestart: false,
+        init() {
+            // Clear admin password for security
+            this.form.admin.password = '';
+        },
+        async saveSettings() {
+            const d = await api('PUT', '/api/admin/settings', this.form);
+            showToast('已保存');
+            if (d.needs_restart) this.needsRestart = true;
+        }
+    }
+}
+</script>
+{% endblock %}

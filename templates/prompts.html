@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}提示词管理{% endblock %}
+{% block content %}
+<h1>📝 视觉提示词管理</h1>
+<div x-data="promptManager()">
+    <button class="btn btn-primary" @click="openCreate()">+ 新建提示词</button>
+    <div class="prompt-list">
+        <template x-for="name in prompts" :key="name">
+            <div class="prompt-item" @click="loadPrompt(name)" :class="{active:currentPrompt===name}">
+                <span x-text="name"></span>
+                <button class="btn btn-sm btn-danger" @click.stop="deletePrompt(name)" x-show="name!=='default.txt'">删除</button>
+            </div>
+        </template>
+    </div>
+    <div x-show="currentPrompt" class="card" style="margin-top:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+            <h3 x-text="'编辑: ' + currentPrompt"></h3>
+            <button class="btn btn-sm btn-outline" @click="restoreDefault()" x-show="['default.txt','ocr.txt','code.txt','ui.txt','chart.txt'].includes(currentPrompt)">恢复默认</button>
+        </div>
+        <textarea class="input" x-model="promptContent" rows="20" style="font-family:monospace;width:100%"></textarea>
+        <div class="form-actions" style="margin-top:8px">
+            <button class="btn btn-primary" @click="savePrompt()">保存</button>
+            <button class="btn btn-ghost" @click="currentPrompt=null">取消</button>
+        </div>
+    </div>
+    <div class="modal-overlay" x-show="showCreate" @click.self="showCreate=false">
+        <div class="modal">
+            <h3>新建提示词</h3>
+            <form @submit.prevent="createPrompt()">
+                <div class="form-group"><label>文件名 (.txt)</label><input class="input" x-model="newName" placeholder="my-prompt.txt"></div>
+                <div class="form-actions"><button type="submit" class="btn btn-primary">创建</button><button type="button" class="btn btn-ghost" @click="showCreate=false">取消</button></div>
+            </form>
+        </div>
+    </div>
+</div>
+<script>
+function promptManager() {
+    return {
+        prompts:[], currentPrompt:null, promptContent:'', showCreate:false, newName:'',
+        async init(){ const d=await api('GET','/api/admin/prompts'); this.prompts=d.prompts||[]; },
+        async loadPrompt(name){ this.currentPrompt=name; const d=await api('GET',`/api/admin/prompts/${name}`); this.promptContent=d.content; },
+        async savePrompt(){ await api('PUT',`/api/admin/prompts/${this.currentPrompt}`,{content:this.promptContent}); showToast('已保存'); },
+        openCreate(){ this.newName=''; this.showCreate=true; },
+        async createPrompt(){ await api('POST','/api/admin/prompts',{filename:this.newName,content:''}); this.showCreate=false; showToast('已创建'); location.reload(); },
+        async deletePrompt(name){ if(!confirm(`删除"${name}"？`))return; await api('DELETE',`/api/admin/prompts/${name}`); showToast('已删除'); location.reload(); },
+        async restoreDefault(){ if(!confirm('恢复默认提示词将覆盖当前内容，确定？'))return; const defaults={
+            'default.txt':'你是一个高级视觉分析助手...','ocr.txt':'你是一个专业OCR文字提取专家...',
+            'code.txt':'你是一个代码分析和错误诊断专家...','ui.txt':'你是一个UI/UX设计分析专家...','chart.txt':'你是一个数据可视化分析专家...'};
+            await api('PUT',`/api/admin/prompts/${this.currentPrompt}`,{content:defaults[this.currentPrompt]||''}); showToast('已恢复默认'); location.reload();
+        }
+    }
+}
+</script>
+{% endblock %}

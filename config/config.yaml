@@ -1,0 +1,55 @@
+server:
+  host: 127.0.0.1
+  port: 8042
+  access_key: ''
+  request_timeout: 180
+admin:
+  enabled: true
+  username: admin
+  password: ${GRASSVISION_ADMIN_PASSWORD}
+source_providers:
+  deepseek:
+    name: DeepSeek
+    enabled: true
+    base_url: https://api.deepseek.com
+    api_key: ${DEEPSEEK_API_KEY}
+    timeout: 120
+    headers: {}
+vision_providers:
+  vivo:
+    name: vivo
+    enabled: true
+    base_url: https://api-ai.vivo.com.cn/v1
+    api_key: ${VIVO_API_KEY}
+    model: Doubao-Seed-2.0-pro
+    timeout: 120
+    max_images: 10
+    max_image_size_mb: 10
+    headers: {}
+models:
+  deepseek-v4-pro-vison:
+    name: deepseek-v4-pro-vison
+    enabled: true
+    source_provider: deepseek
+    source_model: deepseek-v4-pro
+    vision_enabled: true
+    vision_provider: vivo
+    vision_model: Doubao-Seed-2.0-pro
+    vision_prompt: prompts/default.txt
+    vision_failure_mode: error
+    replace_response_model: true
+image:
+  max_images: 8
+  max_image_size_mb: 10
+  max_total_size_mb: 30
+  max_width: 4096
+  max_height: 4096
+  download_timeout: 20
+  allow_private_network: false
+  multi_image_mode: together
+logging:
+  level: INFO
+  save_to_file: true
+  file: logs/grassvision.log
+  log_request_body: false
+  log_vision_result: false

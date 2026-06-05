@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}首页 - GrassVision{% endblock %}
+{% block content %}
+<h1>📊 管理首页</h1>
+
+<div class="stats-grid">
+    <div class="stat-card"><div class="stat-value">{{ source_count }}</div><div class="stat-label">源渠道</div></div>
+    <div class="stat-card"><div class="stat-value">{{ vision_count }}</div><div class="stat-label">视觉渠道</div></div>
+    <div class="stat-card"><div class="stat-value">{{ model_count }}</div><div class="stat-label">增强模型</div></div>
+    <div class="stat-card"><div class="stat-value">{{ enabled_model_count }}</div><div class="stat-label">已启用模型</div></div>
+</div>
+
+<div class="card">
+    <h3>服务状态</h3>
+    <table class="info-table">
+        <tr><td>状态</td><td><span class="badge badge-success">运行中</span></td></tr>
+        <tr><td>监听地址</td><td>{{ config.server.host }}:{{ config.server.port }}</td></tr>
+        <tr><td>配置路径</td><td><code>{{ meta.path }}</code></td></tr>
+        <tr><td>配置加载时间</td><td>{{ meta.loaded_at or '未加载' }}</td></tr>
+        <tr><td>配置错误</td><td>{{ meta.error or '无' }}</td></tr>
+    </table>
+</div>
+
+<div class="quick-actions">
+    <a href="/admin/source-providers" class="btn btn-primary">新增源渠道</a>
+    <a href="/admin/vision-providers" class="btn btn-primary">新增视觉渠道</a>
+    <a href="/admin/models" class="btn btn-primary">新增增强模型</a>
+    <button onclick="api('POST','/api/admin/reload').then(()=>location.reload())" class="btn btn-outline">重新加载配置</button>
+    <a href="/admin/playground" class="btn btn-outline">在线测试</a>
+</div>
+{% endblock %}

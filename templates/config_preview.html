@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}配置预览{% endblock %}
+{% block content %}
+<h1>📄 配置预览</h1>
+<div x-data="configPreview()">
+    <div class="form-actions" style="margin-bottom:12px">
+        <button class="btn btn-outline" @click="downloadConfig()">下载配置</button>
+        <button class="btn btn-outline" @click="reloadConfig()">重新加载</button>
+    </div>
+    <div>
+        <textarea class="input" x-model="yamlContent" rows="30" style="font-family:monospace;width:100%;white-space:pre"></textarea>
+    </div>
+    <div class="form-actions" style="margin-top:12px">
+        <button class="btn btn-primary" @click="saveYaml()">保存配置</button>
+    </div>
+    <p x-show="error" class="error-msg" x-text="error"></p>
+</div>
+<script>
+function configPreview() {
+    return {
+        yamlContent:`{{ config_yaml | e }}`, error:'',
+        downloadConfig(){ window.open('/api/admin/config/download'); },
+        async reloadConfig(){ await api('POST','/api/admin/reload'); showToast('配置已重新加载'); location.reload(); },
+        async saveYaml(){ try{ await api('PUT','/api/admin/config/yaml',{yaml:this.yamlContent}); showToast('配置已保存'); this.error=''; }catch(e){ this.error=e.message; showToast(e.message,'error'); } }
+    }
+}
+</script>
+{% endblock %}

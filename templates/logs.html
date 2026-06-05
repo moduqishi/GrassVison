@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}日志查看{% endblock %}
+{% block content %}
+<h1>📋 日志查看</h1>
+<div x-data="logViewer()">
+    <div class="toolbar">
+        <input class="input" x-model="keyword" placeholder="搜索关键词..." @keyup.enter="loadLogs()" style="max-width:300px">
+        <label><input type="checkbox" x-model="errorOnly" @change="loadLogs()">仅显示错误</label>
+        <label><input type="checkbox" x-model="autoRefresh">自动刷新</label>
+        <button class="btn btn-outline" @click="loadLogs()">刷新</button>
+        <button class="btn btn-outline" @click="clearLogs()">清空</button>
+        <button class="btn btn-outline" @click="downloadLogs()">下载</button>
+    </div>
+    <div class="card"><pre class="log-box" x-ref="logBox"><template x-for="line in lines"><div x-text="line"></div></template></pre></div>
+    <p style="margin-top:8px;color:var(--text-muted)">共 <span x-text="total"></span> 行</p>
+</div>
+<script>
+function logViewer() {
+    return {
+        lines:[], total:0, keyword:'', errorOnly:false, autoRefresh:false,
+        async init(){ await this.loadLogs(); setInterval(()=>{ if(this.autoRefresh) this.loadLogs(); },3000); },
+        async loadLogs(){ const p=new URLSearchParams({lines:200}); if(this.keyword) p.set('keyword',this.keyword); if(this.errorOnly) p.set('error_only','1'); const r=await fetch('/api/admin/logs?'+p); const d=await r.json(); this.lines=d.lines; this.total=d.total; },
+        async clearLogs(){ if(!confirm('确定清空日志？'))return; await api('DELETE','/api/admin/logs'); this.lines=[]; this.total=0; showToast('日志已清空'); },
+        downloadLogs(){ const blob=new Blob([this.lines.join('\n')],{type:'text/plain'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='grassvision.log'; a.click(); }
+    }
+}
+</script>
+{% endblock %}

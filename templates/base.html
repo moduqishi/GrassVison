@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}GrassVision{% endblock %}</title>
+    <link rel="stylesheet" href="/static/css/admin.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body>
+    <div class="app-layout">
+        <nav class="sidebar">
+            <div class="sidebar-brand">
+                <h2>🌿 GrassVision</h2>
+            </div>
+            <ul class="sidebar-nav">
+                <li><a href="/admin/dashboard" class="nav-item">📊 首页</a></li>
+                <li><a href="/admin/source-providers" class="nav-item">🔗 源渠道</a></li>
+                <li><a href="/admin/vision-providers" class="nav-item">👁️ 视觉渠道</a></li>
+                <li><a href="/admin/models" class="nav-item">🧩 增强模型</a></li>
+                <li><a href="/admin/prompts" class="nav-item">📝 提示词</a></li>
+                <li><a href="/admin/playground" class="nav-item">🧪 在线测试</a></li>
+                <li><a href="/admin/stats" class="nav-item">📈 用量统计</a></li>
+                <li><a href="/admin/settings" class="nav-item">⚙️ 系统设置</a></li>
+                <li><a href="/admin/config-preview" class="nav-item">📄 配置预览</a></li>
+                <li><a href="/admin/logs" class="nav-item">📋 日志</a></li>
+            </ul>
+            <div class="sidebar-footer">
+                <button onclick="logout()" class="btn btn-ghost btn-sm">退出登录</button>
+            </div>
+        </nav>
+        <main class="main-content">
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+    <script>
+        async function logout() {
+            await fetch('/api/admin/logout', {method:'POST'});
+            window.location.href = '/admin/login';
+        }
+        async function api(method, url, body) {
+            const opts = {method, headers:{'Content-Type':'application/json'}};
+            if (body) opts.body = JSON.stringify(body);
+            const r = await fetch(url, opts);
+            if (r.status === 401) { window.location.href = '/admin/login'; return; }
+            const data = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(data.error || data.detail || r.statusText);
+            return data;
+        }
+        function showToast(msg, type='success') {
+            const t = document.createElement('div');
+            t.className = `toast toast-${type}`;
+            t.textContent = msg;
+            document.body.appendChild(t);
+            setTimeout(() => t.remove(), 3000);
+        }
+    </script>
+</body>
+</html>

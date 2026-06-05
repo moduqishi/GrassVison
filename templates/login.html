@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GrassVision - 登录</title>
+    <link rel="stylesheet" href="/static/css/admin.css">
+</head>
+<body class="login-body">
+    <div class="login-card">
+        <h1>🌿 GrassVision</h1>
+        <p class="login-subtitle">管理后台登录</p>
+        <form id="loginForm" onsubmit="doLogin(event)">
+            <div class="form-group">
+                <label>用户名</label>
+                <input type="text" name="username" value="admin" class="input" required>
+            </div>
+            <div class="form-group">
+                <label>密码</label>
+                <input type="password" name="password" class="input" required autofocus>
+            </div>
+            <div id="loginError" class="error-msg" style="display:none"></div>
+            <button type="submit" class="btn btn-primary btn-full">登 录</button>
+        </form>
+    </div>
+    <script>
+        async function doLogin(e) {
+            e.preventDefault();
+            const fd = new FormData(e.target);
+            const r = await fetch('/api/admin/login', {method:'POST', body:fd});
+            const data = await r.json();
+            if (data.ok) {
+                window.location.href = '/admin/dashboard';
+            } else {
+                document.getElementById('loginError').style.display = 'block';
+                document.getElementById('loginError').textContent = data.error || '登录失败';
+            }
+        }
+    </script>
+</body>
+</html>

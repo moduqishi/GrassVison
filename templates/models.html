@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}增强模型管理{% endblock %}
+{% block content %}
+<h1>🧩 增强模型管理</h1>
+<div x-data="modelManager()">
+    <button class="btn btn-primary" @click="openCreate()">+ 新增模型</button>
+    <table class="data-table">
+        <thead><tr><th>公开 ID</th><th>名称</th><th>源渠道</th><th>源模型</th><th>视觉增强</th><th>视觉渠道</th><th>状态</th><th>操作</th></tr></thead>
+        <tbody>
+            <template x-for="(m, key) in models" :key="key">
+                <tr>
+                    <td><code x-text="key"></code></td><td x-text="m.name"></td><td x-text="m.source_provider"></td><td x-text="m.source_model"></td>
+                    <td><span :class="m.vision_enabled ? 'badge badge-success' : 'badge badge-muted'" x-text="m.vision_enabled ? '开' : '关'"></span></td>
+                    <td x-text="m.vision_provider"></td>
+                    <td><span :class="m.enabled ? 'badge badge-success' : 'badge badge-muted'" x-text="m.enabled ? '启用' : '禁用'"></span></td>
+                    <td class="actions">
+                        <button class="btn btn-sm btn-outline" @click="editModel(key, m)">编辑</button>
+                        <button class="btn btn-sm btn-outline" @click="copyModel(key, m)">复制</button>
+                        <button class="btn btn-sm btn-danger" @click="deleteModel(key)">删除</button>
+                    </td>
+                </tr>
+            </template>
+        </tbody>
+    </table>
+
+    <!-- Modal -->
+    <div class="modal-overlay" x-show="showModal" @click.self="showModal=false">
+        <div class="modal modal-wide">
+            <h3 x-text="editing ? '编辑模型' : '新增模型'"></h3>
+            <form @submit.prevent="saveModel()">
+                <div class="form-group"><label>公开模型 ID</label><input class="input" x-model="form.model_id" :disabled="editing" required></div>
+                <div class="form-group"><label>显示名称</label><input class="input" x-model="form.name"></div>
+                <div class="form-group"><label>源渠道</label><select class="input" x-model="form.source_provider" @change="onSourceProviderChange()"><option value="">-- 选择 --</option><template x-for="s in sourceKeys"><option :value="s" x-text="s"></option></template></select></div>
+                <div class="form-group">
+                    <label>源模型 ID</label>
+                    <div class="input-row">
+                        <input class="input" x-model="form.source_model" :list="'source-models-'+form.source_provider" placeholder="输入或从列表选择">
+                        <datalist :id="'source-models-'+form.source_provider">
+                            <template x-for="m in sourceModels[form.source_provider]" :key="m"><option :value="m"></option></template>
+                        </datalist>
+                        <button type="button" class="btn btn-sm btn-outline" @click="fetchSourceModels()" :disabled="!form.source_provider||sourceLoading">🔄 拉取列表</button>
+                    </div>
+                    <p class="hint" x-text="sourceModelCount"></p>
+                </div>
+                <div class="form-group"><label><input type="checkbox" x-model="form.vision_enabled"> 启用视觉增强</label></div>
+                <div class="form-group"><label>视觉渠道</label><select class="input" x-model="form.vision_provider" @change="onVisionProviderChange()"><option value="">-- 选择 --</option><template x-for="v in visionKeys"><option :value="v" x-text="v"></option></template></select></div>
+                <div class="form-group">
+                    <label>视觉模型 ID</label>
+                    <div class="input-row">
+                        <input class="input" x-model="form.vision_model" :list="'vision-models-'+form.vision_provider" placeholder="输入或从列表选择">
+                        <datalist :id="'vision-models-'+form.vision_provider">
+                            <template x-for="m in visionModels[form.vision_provider]" :key="m"><option :value="m"></option></template>
+                        </datalist>
+                        <button type="button" class="btn btn-sm btn-outline" @click="fetchVisionModels()" :disabled="!form.vision_provider||visionLoading">🔄 拉取列表</button>
+                    </div>
+                    <p class="hint" x-text="visionModelCount"></p>
+                </div>
+                <div class="form-group"><label>视觉提示词</label><select class="input" x-model="form.vision_prompt"><template x-for="pf in promptFiles"><option :value="'prompts/'+pf" x-text="pf"></option></template></select></div>
+                <div class="form-group"><label>失败处理</label><select class="input" x-model="form.vision_failure_mode"><option value="error">返回错误</option><option value="skip">跳过视觉继续</option></select></div>
+                <div class="form-group"><label><input type="checkbox" x-model="form.replace_response_model"> 替换响应模型 ID</label></div>
+                <div class="form-group"><label><input type="checkbox" x-model="form.enabled"> 启用</label></div>
+                <div class="form-actions"><button type="submit" class="btn btn-primary">保存</button><button type="button" class="btn btn-ghost" @click="showModal=false">取消</button></div>
+            </form>
+        </div>
+    </div>
+</div>
+<script>
+function modelManager() {
+    return {
+        models:{}, showModal:false, editing:false,
+        sourceKeys:{{ source_keys | tojson }}, visionKeys:{{ vision_keys | tojson }}, promptFiles:{{ prompt_files | tojson }},
+        sourceModels:{}, visionModels:{}, sourceLoading:false, visionLoading:false,
+
+        form:{model_id:'',name:'',source_provider:'',source_model:'',vision_enabled:false,vision_provider:'',vision_model:'',vision_prompt:'prompts/default.txt',vision_failure_mode:'error',replace_response_model:true,enabled:true},
+
+        get sourceModelCount(){
+            const arr=this.sourceModels[this.form.source_provider];
+            return arr&&arr.length ? `已加载 ${arr.length} 个模型，可直接输入自定义 ID` : '可先拉取列表或直接输入自定义 ID';
+        },
+        get visionModelCount(){
+            const arr=this.visionModels[this.form.vision_provider];
+            return arr&&arr.length ? `已加载 ${arr.length} 个模型，可直接输入自定义 ID` : '可先拉取列表或直接输入自定义 ID';
+        },
+
+        async init(){ const d=await api('GET','/api/admin/models'); this.models=d.models||{}; },
+        openCreate(){ this.editing=false; this.form={model_id:'',name:'',source_provider:'',source_model:'',vision_enabled:false,vision_provider:'',vision_model:'',vision_prompt:'prompts/default.txt',vision_failure_mode:'error',replace_response_model:true,enabled:true}; this.showModal=true; },
+        editModel(key,m){ this.editing=true; this.form={model_id:key,...m}; this.showModal=true; },
+        copyModel(key,m){ this.editing=false; this.form={model_id:key+'-copy',...m,model_id:key+'-copy'}; this.showModal=true; },
+
+        onSourceProviderChange(){
+            if(this.form.source_provider && !this.sourceModels[this.form.source_provider]){
+                // Auto-fetch if not loaded
+            }
+        },
+        onVisionProviderChange(){
+            if(this.form.vision_provider && !this.visionModels[this.form.vision_provider]){
+                // Auto-fetch if not loaded
+            }
+        },
+
+        async fetchSourceModels(){
+            if(!this.form.source_provider) return;
+            this.sourceLoading=true;
+            try{
+                const d=await api('GET',`/api/admin/source-providers/${this.form.source_provider}/models`);
+                this.sourceModels[this.form.source_provider]=d.models||[];
+                if(d.error) showToast('拉取失败: '+d.error,'error');
+                else showToast(`已加载 ${d.models.length} 个模型`);
+            }catch(e){ showToast('拉取失败: '+e.message,'error'); }
+            this.sourceLoading=false;
+        },
+
+        async fetchVisionModels(){
+            if(!this.form.vision_provider) return;
+            this.visionLoading=true;
+            try{
+                const d=await api('GET',`/api/admin/vision-providers/${this.form.vision_provider}/models`);
+                this.visionModels[this.form.vision_provider]=d.models||[];
+                if(d.error) showToast('拉取失败: '+d.error,'error');
+                else showToast(`已加载 ${d.models.length} 个模型`);
+            }catch(e){ showToast('拉取失败: '+e.message,'error'); }
+            this.visionLoading=false;
+        },
+
+        async saveModel(){ const m=this.editing?'PUT':'POST'; const u=this.editing?`/api/admin/models/${this.form.model_id}`:'/api/admin/models'; const body={...this.form}; if(this.editing)delete body.model_id; await api(m,u,body); this.showModal=false; showToast('已保存'); location.reload(); },
+        async deleteModel(key){ if(!confirm(`确定删除模型"${key}"？`))return; await api('DELETE',`/api/admin/models/${key}`); showToast('已删除'); location.reload(); }
+    }
+}
+</script>
+{% endblock %}

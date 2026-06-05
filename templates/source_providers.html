@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}源渠道管理{% endblock %}
+{% block content %}
+<h1>🔗 源渠道管理</h1>
+<div x-data="sourceProviders()">
+    <button class="btn btn-primary" @click="openCreate()">+ 新增渠道</button>
+    <table class="data-table">
+        <thead><tr><th>ID</th><th>名称</th><th>Base URL</th><th>超时</th><th>状态</th><th>操作</th></tr></thead>
+        <tbody>
+            <template x-for="(p, key) in providers" :key="key">
+                <tr>
+                    <td><code x-text="key"></code></td><td x-text="p.name"></td><td class="truncate" x-text="p.base_url"></td><td x-text="p.timeout + 's'"></td>
+                    <td><span :class="p.enabled ? 'badge badge-success' : 'badge badge-muted'" x-text="p.enabled ? '启用' : '禁用'"></span></td>
+                    <td class="actions">
+                        <button class="btn btn-sm btn-outline" @click="editProvider(key, p)">编辑</button>
+                        <button class="btn btn-sm btn-outline" @click="testProvider(key)">测试</button>
+                        <button class="btn btn-sm btn-danger" @click="deleteProvider(key)">删除</button>
+                    </td>
+                </tr>
+            </template>
+        </tbody>
+    </table>
+    <div class="modal-overlay" x-show="showModal" @click.self="showModal=false">
+        <div class="modal">
+            <h3 x-text="editing ? '编辑渠道' : '新增渠道'"></h3>
+            <form @submit.prevent="saveProvider()">
+                <div class="form-group"><label>渠道 ID</label><input class="input" x-model="form.key" :disabled="editing"></div>
+                <div class="form-group"><label>渠道名称</label><input class="input" x-model="form.name"></div>
+                <div class="form-group"><label>Base URL</label><input class="input" x-model="form.base_url"></div>
+                <div class="form-group"><label>API Key（留空不修改）</label><input class="input" x-model="form.api_key" type="password"></div>
+                <div class="form-group"><label>超时时间 (秒)</label><input class="input" x-model.number="form.timeout" type="number"></div>
+                <div class="form-group"><label><input type="checkbox" x-model="form.enabled"> 启用</label></div>
+                <div class="form-actions"><button type="submit" class="btn btn-primary">保存</button><button type="button" class="btn btn-ghost" @click="showModal=false">取消</button></div>
+            </form>
+        </div>
+    </div>
+</div>
+<script>
+function sourceProviders() {
+    return {
+        providers:{}, showModal:false, editing:false,
+        form:{key:'',name:'',base_url:'',api_key:'',timeout:120,enabled:true},
+        async init(){ const d=await api('GET','/api/admin/source-providers'); this.providers=d.providers||{}; },
+        openCreate(){ this.editing=false; this.form={key:'',name:'',base_url:'',api_key:'',timeout:120,enabled:true}; this.showModal=true; },
+        editProvider(key,p){ this.editing=true; this.form={key,...p,api_key:''}; this.showModal=true; },
+        async saveProvider(){ const m=this.editing?'PUT':'POST'; const u=this.editing?`/api/admin/source-providers/${this.form.key}`:'/api/admin/source-providers'; await api(m,u,this.form); this.showModal=false; showToast(this.editing?'已更新':'已创建'); location.reload(); },
+        async deleteProvider(key){ if(!confirm(`确定删除渠道"${key}"？`))return; try{await api('DELETE',`/api/admin/source-providers/${key}`);showToast('已删除');location.reload();}catch(e){showToast(e.message,'error');} },
+        async testProvider(key){ const r=await fetch(`/api/admin/source-providers/${key}/test`,{method:'POST'}); const d=await r.json(); showToast(d.ok?'连接测试通过':('失败: '+(d.result?.error||'')),d.ok?'success':'error'); }
+    }
+}
+</script>
+{% endblock %}
