@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.auth import AdminAuthMiddleware
-from app.config import get_config, reload_config, get_config_meta, BASE_DIR, BUNDLE_DIR
+from app.config import get_config, reload_config, get_config_meta, DATA_DIR, BUNDLE_DIR
 from app.errors import (
     GrassVisionError, ConfigError, ModelNotFoundError, ProviderError,
     ImageError, VisionAnalysisError, grassvision_exception_handler,
@@ -41,7 +41,7 @@ def setup_logging():
     if cfg.save_to_file:
         log_file = Path(cfg.file)
         if not log_file.is_absolute():
-            log_file = BASE_DIR / log_file
+            log_file = DATA_DIR / log_file
         log_file.parent.mkdir(parents=True, exist_ok=True)
         fh = logging.FileHandler(str(log_file), encoding="utf-8")
         fh.setFormatter(fmt)

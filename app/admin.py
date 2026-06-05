@@ -13,7 +13,7 @@ from app.auth import check_login, COOKIE_NAME, SESSION_DURATION, validate_sessio
 from app.config import (
     get_config, reload_config, save_config, backup_config,
     read_prompt, write_prompt, delete_prompt, list_prompts,
-    get_config_meta, BASE_DIR, BUNDLE_DIR, CONFIG_PATH, PROMPTS_DIR,
+    get_config_meta, DATA_DIR, BUNDLE_DIR, CONFIG_PATH, PROMPTS_DIR,
 )
 from app.providers import test_source_connection, test_vision_connection, get_source_client, get_vision_client
 from app.schemas import (
@@ -502,7 +502,7 @@ async def api_get_logs(lines: int = 200, keyword: str = "", error_only: bool = F
     cfg = get_config()
     log_file = Path(cfg.logging.file)
     if not log_file.is_absolute():
-        log_file = BASE_DIR / log_file
+        log_file = DATA_DIR / log_file
     if not log_file.exists():
         return {"lines": [], "total": 0}
     content = log_file.read_text(encoding="utf-8", errors="replace")
@@ -521,7 +521,7 @@ async def clear_logs():
     cfg = get_config()
     log_file = Path(cfg.logging.file)
     if not log_file.is_absolute():
-        log_file = BASE_DIR / log_file
+        log_file = DATA_DIR / log_file
     log_file.write_text("")
     return {"ok": True}
 

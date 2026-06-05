@@ -8,9 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from app.config import BASE_DIR
+from app.config import STATS_DIR
 
-STATS_DIR = BASE_DIR / "stats"
 STATS_FILE = STATS_DIR / "stats.json"
 MAX_HISTORY = 200
 FLUSH_INTERVAL = 30  # seconds

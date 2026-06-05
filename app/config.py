@@ -24,20 +24,43 @@ from app.schemas import (
     LoggingConfig,
 )
 
+
+def _get_data_dir() -> Path:
+    """Return the platform-appropriate user data directory.
+
+    - Windows : %APPDATA%/GrassVision
+    - macOS   : ~/Library/Application Support/GrassVision
+    - Linux   : ~/.config/grassvision
+    """
+    if sys.platform == "win32":
+        base = os.environ.get("APPDATA")
+        if base:
+            return Path(base) / "GrassVision"
+        # Fallback
+        return Path.home() / "AppData" / "Roaming" / "GrassVision"
+    elif sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "GrassVision"
+    else:
+        return Path.home() / ".config" / "grassvision"
+
+
 # ── Path resolution: frozen (PyInstaller) vs dev ──────────────────
 if getattr(sys, "frozen", False):
-    # PyInstaller one-file bundle: data lives next to the .exe
-    BASE_DIR = Path(sys.executable).parent.resolve()
-    # Bundled read-only assets (templates, static, default prompts)
-    BUNDLE_DIR = Path(sys._MEIPASS)
+    # PyInstaller one-file bundle
+    BASE_DIR = Path(sys.executable).parent.resolve()       # exe location (not writable)
+    BUNDLE_DIR = Path(sys._MEIPASS)                        # bundled read-only assets
+    DATA_DIR = _get_data_dir()                             # user-writable data dir
 else:
     # Dev mode: project root
     BASE_DIR = Path(__file__).resolve().parent.parent
     BUNDLE_DIR = BASE_DIR
+    DATA_DIR = BASE_DIR
 
-CONFIG_PATH = BASE_DIR / "config.yaml"
-BACKUP_DIR = BASE_DIR / "config" / "backups"
-PROMPTS_DIR = BASE_DIR / "config" / "prompts"
+CONFIG_PATH = DATA_DIR / "config.yaml"
+BACKUP_DIR = DATA_DIR / "config" / "backups"
+PROMPTS_DIR = DATA_DIR / "config" / "prompts"
+STATS_DIR = DATA_DIR / "stats"
+LOGS_DIR = DATA_DIR / "logs"
 MAX_BACKUPS = 10
 
 _config: AppConfig | None = None
@@ -49,7 +72,7 @@ def load_config(reload: bool = False) -> AppConfig:
     """Load and validate YAML config.  Raises ConfigError on failure."""
     global _config, _config_loaded_at, _config_error
 
-    load_dotenv(BASE_DIR / ".env", override=False)
+    load_dotenv(DATA_DIR / ".env", override=False)
 
     if not CONFIG_PATH.exists():
         raise ConfigError(f"Config file not found: {CONFIG_PATH}")
@@ -127,7 +150,7 @@ def save_config(config: AppConfig) -> None:
 
 def read_yaml_file(path: str) -> dict:
     """Read a YAML file and return parsed dict."""
-    fp = BASE_DIR / path if not path.startswith("/") else Path(path)
+    fp = DATA_DIR / path if not path.startswith("/") else Path(path)
     if not fp.exists():
         raise ConfigError(f"File not found: {fp}")
     with open(fp, "r", encoding="utf-8") as f:
@@ -136,11 +159,9 @@ def read_yaml_file(path: str) -> dict:
 
 def read_prompt(name: str) -> str:
     """Read a prompt file from config/prompts/ (falls back to bundle defaults)."""
-    # Check user-modified dir first
     fp = PROMPTS_DIR / name
     if fp.exists():
         return fp.read_text(encoding="utf-8")
-    # Fall back to bundled defaults
     bundled = BUNDLE_DIR / "config" / "prompts" / name
     if bundled.exists():
         return bundled.read_text(encoding="utf-8")
@@ -168,7 +189,6 @@ def list_prompts() -> list[str]:
     seen: set[str] = set()
     result: list[str] = []
 
-    # Bundle defaults first
     bundle_prompts = BUNDLE_DIR / "config" / "prompts"
     if bundle_prompts.exists():
         for f in sorted(bundle_prompts.iterdir()):
@@ -176,7 +196,6 @@ def list_prompts() -> list[str]:
                 seen.add(f.name)
                 result.append(f.name)
 
-    # User dir overrides / additions
     if PROMPTS_DIR.exists():
         for f in sorted(PROMPTS_DIR.iterdir()):
             if f.is_file() and f.suffix == ".txt" and f.name not in seen:
