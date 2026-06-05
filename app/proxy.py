@@ -207,7 +207,7 @@ async def handle_chat_completion(
             stats_tracker.record_call(
                 model=request.model, images=len(all_images),
                 stream=True, elapsed=0,
-                vision_used=True, vision_success=True,
+                vision_used=bool(vision_usage), vision_success=True,
                 vision_tokens=vision_usage if vision_usage else None,
                 source_tokens=usage,
             )
@@ -229,7 +229,7 @@ async def handle_chat_completion(
         stats_tracker.record_call(
             model=request.model, images=len(all_images),
             stream=request.stream, elapsed=0,
-            vision_used=True, vision_success=True,
+            vision_used=bool(vision_usage), vision_success=True,
             vision_tokens=vision_usage if vision_usage else None,
             source_tokens=source_usage,
         )
