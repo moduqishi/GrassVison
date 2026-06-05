@@ -82,9 +82,9 @@ jobs:
           --hidden-import app.image_cache
           run.py
 
-      - name: Package archive
+      - name: Package archive with pre-seeded files
         run: |
-          import os, shutil, sys
+          import os, shutil
           from pathlib import Path
 
           target = "${{ matrix.target }}"
@@ -92,23 +92,39 @@ jobs:
           fmt = "${{ matrix.fmt }}"
 
           staging = Path.cwd() / "staging"
-          staging.mkdir(exist_ok=True)
+          if staging.exists():
+              shutil.rmtree(staging)
+          staging.mkdir()
 
+          # 1. Copy executable
           exe = Path("dist") / f"grassvision-{target}{suffix}"
-          example = Path("config.example.yaml")
-
           shutil.copy2(exe, staging / exe.name)
-          shutil.copy2(example, staging / example.name)
-
-          # make executable on unix
           os.chmod(staging / exe.name, 0o755)
 
-          archive_name = shutil.make_archive(
-            base_name=str(Path.cwd() / f"grassvision-{target}"),
-            format=fmt,
-            root_dir=str(staging),
+          # 2. Copy config.yaml (from example — user edits before running)
+          shutil.copy2(Path("config.example.yaml"), staging / "config.yaml")
+
+          # 3. Copy config/prompts/ (pre-seeded, readable)
+          staging_prompts = staging / "config" / "prompts"
+          staging_prompts.mkdir(parents=True)
+          prompts_dir = Path.cwd() / "config" / "prompts"
+          for f in sorted(prompts_dir.iterdir()):
+              if f.is_file() and f.suffix == ".txt":
+                  shutil.copy2(f, staging_prompts / f.name)
+
+          # 4. Create logs/ (empty — program writes here at runtime)
+          (staging / "logs").mkdir()
+
+          print("=== Staging contents ===")
+          for path in sorted(staging.rglob("*")):
+              print(f"  {path.relative_to(staging)}")
+
+          archive_path = shutil.make_archive(
+              base_name=str(Path.cwd() / f"grassvision-{target}"),
+              format=fmt,
+              root_dir=str(staging),
           )
-          print(f"Created: {archive_name} ({os.path.getsize(archive_name)} bytes)")
+          print(f"Created: {archive_path} ({os.path.getsize(archive_path)} bytes)")
         shell: python
 
       - name: Upload artifact
@@ -161,14 +177,14 @@ jobs:
             | 平台 | 压缩包 |
             |------|--------|
             | Linux x64 | `grassvision-linux-x64.tar.gz` |
-            | macOS ARM64 (Apple Silicon) | `grassvision-macos-arm64.tar.gz` |
+            | macOS ARM64 | `grassvision-macos-arm64.tar.gz` |
             | Windows x64 | `grassvision-windows-x64.zip` |
 
             ### 使用
 
-            1. 下载对应平台的压缩包，解压
-            2. 首次运行可执行文件，会自动生成 `config.yaml` 和 `config/prompts/`
-            3. 编辑 `config.yaml` 填入 API Key，再次运行即可
+            1. 下载对应平台的压缩包，解压到任意目录
+            2. 编辑 `config.yaml`，填入 API Key 等信息
+            3. 运行 `grassvision`（或 `grassvision.exe`）
           prerelease: true
           fail_on_unmatched_files: false
           files: release-assets/*

@@ -82,7 +82,7 @@ class StatsTracker:
                     (source_tokens or {}).get("total_tokens", 0)
                 )
 
-            self.call_history.insert(0, entry)  # newest first
+            self.call_history.insert(0, entry)
             if len(self.call_history) > MAX_HISTORY:
                 self.call_history = self.call_history[:MAX_HISTORY]
 

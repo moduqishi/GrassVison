@@ -24,43 +24,19 @@ from app.schemas import (
     LoggingConfig,
 )
 
-
-def _get_data_dir() -> Path:
-    """Return the platform-appropriate user data directory.
-
-    - Windows : %APPDATA%/GrassVision
-    - macOS   : ~/Library/Application Support/GrassVision
-    - Linux   : ~/.config/grassvision
-    """
-    if sys.platform == "win32":
-        base = os.environ.get("APPDATA")
-        if base:
-            return Path(base) / "GrassVision"
-        # Fallback
-        return Path.home() / "AppData" / "Roaming" / "GrassVision"
-    elif sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / "GrassVision"
-    else:
-        return Path.home() / ".config" / "grassvision"
-
-
 # ── Path resolution: frozen (PyInstaller) vs dev ──────────────────
 if getattr(sys, "frozen", False):
-    # PyInstaller one-file bundle
-    BASE_DIR = Path(sys.executable).parent.resolve()       # exe location (not writable)
-    BUNDLE_DIR = Path(sys._MEIPASS)                        # bundled read-only assets
-    DATA_DIR = _get_data_dir()                             # user-writable data dir
+    BASE_DIR = Path(sys.executable).parent.resolve()
+    BUNDLE_DIR = Path(sys._MEIPASS)
 else:
-    # Dev mode: project root
     BASE_DIR = Path(__file__).resolve().parent.parent
     BUNDLE_DIR = BASE_DIR
-    DATA_DIR = BASE_DIR
 
-CONFIG_PATH = DATA_DIR / "config.yaml"
-BACKUP_DIR = DATA_DIR / "config" / "backups"
-PROMPTS_DIR = DATA_DIR / "config" / "prompts"
-STATS_DIR = DATA_DIR / "stats"
-LOGS_DIR = DATA_DIR / "logs"
+CONFIG_PATH = BASE_DIR / "config.yaml"
+BACKUP_DIR = BASE_DIR / "config" / "backups"
+PROMPTS_DIR = BASE_DIR / "config" / "prompts"
+STATS_DIR = BASE_DIR / "stats"
+LOGS_DIR = BASE_DIR / "logs"
 MAX_BACKUPS = 10
 
 _config: AppConfig | None = None
@@ -72,7 +48,7 @@ def load_config(reload: bool = False) -> AppConfig:
     """Load and validate YAML config.  Raises ConfigError on failure."""
     global _config, _config_loaded_at, _config_error
 
-    load_dotenv(DATA_DIR / ".env", override=False)
+    load_dotenv(BASE_DIR / ".env", override=False)
 
     if not CONFIG_PATH.exists():
         raise ConfigError(f"Config file not found: {CONFIG_PATH}")
@@ -132,6 +108,7 @@ def save_config(config: AppConfig) -> None:
     raw = config.model_dump(exclude_none=False, mode="python")
     yaml_str = yaml.dump(raw, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     backup_config()
 
     fd, tmp_path = tempfile.mkstemp(suffix=".tmp", dir=CONFIG_PATH.parent)
@@ -150,7 +127,7 @@ def save_config(config: AppConfig) -> None:
 
 def read_yaml_file(path: str) -> dict:
     """Read a YAML file and return parsed dict."""
-    fp = DATA_DIR / path if not path.startswith("/") else Path(path)
+    fp = BASE_DIR / path if not path.startswith("/") else Path(path)
     if not fp.exists():
         raise ConfigError(f"File not found: {fp}")
     with open(fp, "r", encoding="utf-8") as f:
