@@ -24,14 +24,20 @@ jobs:
             target: linux-x64
             suffix: ""
             sep: ":"
+            fmt: gztar
+            ext: tar.gz
           - os: macos-latest
             target: macos-arm64
             suffix: ""
             sep: ":"
+            fmt: gztar
+            ext: tar.gz
           - os: windows-latest
             target: windows-x64
             suffix: ".exe"
             sep: ";"
+            fmt: zip
+            ext: zip
 
     runs-on: ${{ matrix.os }}
 
@@ -76,11 +82,40 @@ jobs:
           --hidden-import app.image_cache
           run.py
 
+      - name: Package archive
+        run: |
+          import os, shutil, sys
+          from pathlib import Path
+
+          target = "${{ matrix.target }}"
+          suffix = "${{ matrix.suffix }}"
+          fmt = "${{ matrix.fmt }}"
+
+          staging = Path.cwd() / "staging"
+          staging.mkdir(exist_ok=True)
+
+          exe = Path("dist") / f"grassvision-{target}{suffix}"
+          example = Path("config.example.yaml")
+
+          shutil.copy2(exe, staging / exe.name)
+          shutil.copy2(example, staging / example.name)
+
+          # make executable on unix
+          os.chmod(staging / exe.name, 0o755)
+
+          archive_name = shutil.make_archive(
+            base_name=str(Path.cwd() / f"grassvision-{target}"),
+            format=fmt,
+            root_dir=str(staging),
+          )
+          print(f"Created: {archive_name} ({os.path.getsize(archive_name)} bytes)")
+        shell: python
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: grassvision-${{ matrix.target }}
-          path: dist/grassvision-${{ matrix.target }}${{ matrix.suffix }}
+          path: grassvision-${{ matrix.target }}.${{ matrix.ext }}
 
   release:
     needs: build
@@ -100,7 +135,6 @@ jobs:
         run: |
           mkdir -p release-assets
           find dist-artifacts -type f -exec cp {} release-assets/ \;
-          chmod +x release-assets/* 2>/dev/null || true
           ls -lh release-assets/
 
       - name: Generate tag
@@ -124,16 +158,16 @@ jobs:
 
             ### 下载
 
-            | 平台 | 文件 |
-            |------|------|
-            | Linux x64 | `grassvision-linux-x64` |
-            | macOS ARM64 (Apple Silicon) | `grassvision-macos-arm64` |
-            | Windows x64 | `grassvision-windows-x64.exe` |
+            | 平台 | 压缩包 |
+            |------|--------|
+            | Linux x64 | `grassvision-linux-x64.tar.gz` |
+            | macOS ARM64 (Apple Silicon) | `grassvision-macos-arm64.tar.gz` |
+            | Windows x64 | `grassvision-windows-x64.zip` |
 
             ### 使用
 
-            1. 下载对应平台的可执行文件，放到一个目录里
-            2. 首次运行会自动在该目录生成 `config.yaml` 和 `config/prompts/`
+            1. 下载对应平台的压缩包，解压
+            2. 首次运行可执行文件，会自动生成 `config.yaml` 和 `config/prompts/`
             3. 编辑 `config.yaml` 填入 API Key，再次运行即可
           prerelease: true
           fail_on_unmatched_files: false
