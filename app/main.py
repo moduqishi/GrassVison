@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.auth import AdminAuthMiddleware
-from app.config import get_config, reload_config, get_config_meta, BASE_DIR
+from app.config import get_config, reload_config, get_config_meta, BASE_DIR, BUNDLE_DIR
 from app.errors import (
     GrassVisionError, ConfigError, ModelNotFoundError, ProviderError,
     ImageError, VisionAnalysisError, grassvision_exception_handler,
@@ -134,6 +134,6 @@ async def health():
     }
 
 
-STATIC_DIR = BASE_DIR / "static"
+STATIC_DIR = BUNDLE_DIR / "static"
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

@@ -13,7 +13,7 @@ from app.auth import check_login, COOKIE_NAME, SESSION_DURATION, validate_sessio
 from app.config import (
     get_config, reload_config, save_config, backup_config,
     read_prompt, write_prompt, delete_prompt, list_prompts,
-    get_config_meta, BASE_DIR, CONFIG_PATH, PROMPTS_DIR,
+    get_config_meta, BASE_DIR, BUNDLE_DIR, CONFIG_PATH, PROMPTS_DIR,
 )
 from app.providers import test_source_connection, test_vision_connection, get_source_client, get_vision_client
 from app.schemas import (
@@ -25,7 +25,7 @@ from app.stats import get_stats
 
 router = APIRouter()
 
-TEMPLATES_DIR = BASE_DIR / "templates"
+TEMPLATES_DIR = BUNDLE_DIR / "templates"
 
 _env = Environment(
     loader=FileSystemLoader(str(TEMPLATES_DIR)),

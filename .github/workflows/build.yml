@@ -49,9 +49,6 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Prepare config.yaml from example
-        run: cp config.example.yaml config.yaml
-
       - name: Build with PyInstaller
         run: >
           pyinstaller --onefile
@@ -59,8 +56,7 @@ jobs:
           --add-data "templates${{ matrix.sep }}templates"
           --add-data "static${{ matrix.sep }}static"
           --add-data "config${{ matrix.sep }}config"
-          --add-data "config.yaml${{ matrix.sep }}."
-          --add-data ".env${{ matrix.sep }}."
+          --add-data "config.example.yaml${{ matrix.sep }}."
           --hidden-import uvicorn.logging
           --hidden-import uvicorn.loops.auto
           --hidden-import uvicorn.protocols.http.auto
@@ -105,7 +101,6 @@ jobs:
           mkdir -p release-assets
           find dist-artifacts -type f -exec cp {} release-assets/ \;
           chmod +x release-assets/* 2>/dev/null || true
-          echo "=== Release assets ==="
           ls -lh release-assets/
 
       - name: Generate tag
@@ -137,7 +132,9 @@ jobs:
 
             ### 使用
 
-            下载对应平台的可执行文件，直接运行即可启动服务。
+            1. 下载对应平台的可执行文件，放到一个目录里
+            2. 首次运行会自动在该目录生成 `config.yaml` 和 `config/prompts/`
+            3. 编辑 `config.yaml` 填入 API Key，再次运行即可
           prerelease: true
           fail_on_unmatched_files: false
           files: release-assets/*

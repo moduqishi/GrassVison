@@ -1,7 +1,8 @@
 """Configuration loading, reloading, atomic write, and backup."""
 from __future__ import annotations
-import os
 
+import os
+import sys
 import shutil
 import tempfile
 from datetime import datetime
@@ -23,7 +24,17 @@ from app.schemas import (
     LoggingConfig,
 )
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+# ── Path resolution: frozen (PyInstaller) vs dev ──────────────────
+if getattr(sys, "frozen", False):
+    # PyInstaller one-file bundle: data lives next to the .exe
+    BASE_DIR = Path(sys.executable).parent.resolve()
+    # Bundled read-only assets (templates, static, default prompts)
+    BUNDLE_DIR = Path(sys._MEIPASS)
+else:
+    # Dev mode: project root
+    BASE_DIR = Path(__file__).resolve().parent.parent
+    BUNDLE_DIR = BASE_DIR
+
 CONFIG_PATH = BASE_DIR / "config.yaml"
 BACKUP_DIR = BASE_DIR / "config" / "backups"
 PROMPTS_DIR = BASE_DIR / "config" / "prompts"
@@ -124,15 +135,20 @@ def read_yaml_file(path: str) -> dict:
 
 
 def read_prompt(name: str) -> str:
-    """Read a prompt file from config/prompts/."""
+    """Read a prompt file from config/prompts/ (falls back to bundle defaults)."""
+    # Check user-modified dir first
     fp = PROMPTS_DIR / name
-    if not fp.exists():
-        raise ConfigError(f"Prompt not found: {name}")
-    return fp.read_text(encoding="utf-8")
+    if fp.exists():
+        return fp.read_text(encoding="utf-8")
+    # Fall back to bundled defaults
+    bundled = BUNDLE_DIR / "config" / "prompts" / name
+    if bundled.exists():
+        return bundled.read_text(encoding="utf-8")
+    raise ConfigError(f"Prompt not found: {name}")
 
 
 def write_prompt(name: str, content: str) -> None:
-    """Write a prompt file."""
+    """Write a prompt file to the user data directory."""
     PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
     fp = PROMPTS_DIR / name
     fp.write_text(content, encoding="utf-8")
@@ -148,9 +164,23 @@ def delete_prompt(name: str) -> None:
 
 
 def list_prompts() -> list[str]:
-    """List all prompt file names."""
-    if not PROMPTS_DIR.exists():
-        return []
-    return sorted(
-        [f.name for f in PROMPTS_DIR.iterdir() if f.is_file() and f.suffix == ".txt"]
-    )
+    """List all prompt file names (merged from bundle defaults + user dir)."""
+    seen: set[str] = set()
+    result: list[str] = []
+
+    # Bundle defaults first
+    bundle_prompts = BUNDLE_DIR / "config" / "prompts"
+    if bundle_prompts.exists():
+        for f in sorted(bundle_prompts.iterdir()):
+            if f.is_file() and f.suffix == ".txt" and f.name not in seen:
+                seen.add(f.name)
+                result.append(f.name)
+
+    # User dir overrides / additions
+    if PROMPTS_DIR.exists():
+        for f in sorted(PROMPTS_DIR.iterdir()):
+            if f.is_file() and f.suffix == ".txt" and f.name not in seen:
+                seen.add(f.name)
+                result.append(f.name)
+
+    return result
