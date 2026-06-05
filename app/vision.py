@@ -189,7 +189,7 @@ async def resolve_image_descriptions(
             url_results[url] = "[图片解析失败]"
             url_to_status[url] = "error"
             continue
-        raw_bytes = base64.b64decode(m.group(1))
+        raw_bytes = base64.b64decode(m.group(2))
 
         # Compute content hash
         content_hash = compute_content_hash(raw_bytes)

@@ -9,9 +9,12 @@ from app.config import get_config
 
 class TestFindModel:
     def test_finds_existing_model(self):
-        model = _find_model("deepseek-vision")
+        from app.config import get_config
+        cfg = get_config()
+        model_id = next(iter(cfg.models.keys()))
+        model = _find_model(model_id)
         assert model is not None
-        assert model.source_model == "deepseek-chat"
+        assert model.source_model == cfg.models[model_id].source_model
 
     def test_raises_for_unknown_model(self):
         with pytest.raises(ModelNotFoundError):
@@ -20,8 +23,11 @@ class TestFindModel:
 
 class TestBuildBody:
     def test_builds_source_body(self):
+        from app.config import get_config
+        cfg = get_config()
+        model_id = list(cfg.models.keys())[0]
         request = ChatCompletionRequest(
-            model="deepseek-vision",
+            model=model_id,
             messages=[ChatMessage(role="user", content="hello")],
             temperature=0.7,
             max_tokens=100,

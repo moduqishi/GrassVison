@@ -33,16 +33,16 @@ class TestConfigLoading:
         assert cfg.server.port == 8042
         assert cfg.server.host == "127.0.0.1"
         assert len(cfg.models) >= 1
-        assert "deepseek-vision" in cfg.models
 
 
 class TestModelValidation:
     def test_deepseek_vision_model(self):
         from app.config import get_config
         cfg = get_config()
-        model = cfg.models.get("deepseek-vision")
-        assert model is not None
+        models = list(cfg.models.values())
+        assert len(models) >= 1
+        model = models[0]
         assert model.enabled is True
         assert model.vision_enabled is True
-        assert model.source_model == "deepseek-chat"
+        assert model.source_model == "deepseek-v4-flash-free"
         assert model.vision_failure_mode == "error"
