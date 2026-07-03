@@ -10,6 +10,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import ValidationError
 
 from app.auth import AdminAuthMiddleware
 from app.config import get_config, reload_config, get_config_meta, BASE_DIR, BUNDLE_DIR
@@ -73,6 +74,15 @@ app.add_exception_handler(ModelNotFoundError, grassvision_exception_handler)
 app.add_exception_handler(ProviderError, grassvision_exception_handler)
 app.add_exception_handler(ImageError, grassvision_exception_handler)
 app.add_exception_handler(VisionAnalysisError, grassvision_exception_handler)
+
+
+@app.exception_handler(ValidationError)
+async def validation_exception_handler(request: Request, exc: ValidationError):
+    """Return pydantic ValidationError as JSON instead of 500 plain text."""
+    return JSONResponse(
+        status_code=400,
+        content={"error": {"message": exc.errors()[0].get("msg", "Validation error") if exc.errors() else "Validation error", "type": "ValidationError"}},
+    )
 
 app.include_router(admin_router)
 
