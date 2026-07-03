@@ -431,6 +431,8 @@ async def settings_page(request: Request):
 async def update_settings(data: dict):
     cfg = get_config()
     old_cache = cfg.image.vision_cache.model_dump() if cfg else {}
+    old_host = cfg.server.host
+    old_port = cfg.server.port
     if "server" in data:
         cfg.server = ServerConfig(**data["server"])
     if "admin" in data:
@@ -446,7 +448,7 @@ async def update_settings(data: dict):
     from app.image_cache import get_image_cache as _get_cache
     new_cache = cfg.image.vision_cache
     _reconfigure_cache_if_changed(old_cache, new_cache)
-    needs_restart = "server" in data
+    needs_restart = cfg.server.host != old_host or cfg.server.port != old_port
     return {"ok": True, "needs_restart": needs_restart}
 
 

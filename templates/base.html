@@ -44,7 +44,15 @@
             const r = await fetch(url, opts);
             if (r.status === 401) { window.location.href = '/admin/login'; return; }
             const data = await r.json().catch(() => ({}));
-            if (!r.ok) throw new Error(data.error || data.detail || r.statusText);
+            if (!r.ok) {
+                let msg = data.error || data.detail || r.statusText;
+                if (Array.isArray(msg)) {
+                    msg = msg.map(e => typeof e === 'object' ? (e.msg || JSON.stringify(e)) : e).join('; ');
+                } else if (typeof msg === 'object' && msg !== null) {
+                    msg = msg.message || msg.msg || JSON.stringify(msg);
+                }
+                throw new Error(msg);
+            }
             return data;
         }
         function showToast(msg, type='success') {
