@@ -105,12 +105,16 @@ async def _call_vision_model(
     client = get_vision_client(provider_cfg)
     start = time.time()
     try:
-        resp = await client.post("/chat/completions", json={
+        payload = {
             "model": model,
             "messages": vision_messages,
             "stream": False,
             "max_tokens": 4096,
-        })
+        }
+        if provider_cfg.disable_thinking:
+            payload["enable_thinking"] = False
+            payload["thinking"] = False
+        resp = await client.post("/chat/completions", json=payload)
         if resp.status_code != 200:
             raise VisionAnalysisError(f"Vision model returned {resp.status_code}: {resp.text[:500]}")
         data = resp.json()

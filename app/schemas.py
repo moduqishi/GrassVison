@@ -24,6 +24,7 @@ class VisionProviderConfig(BaseModel):
     timeout: int = 120
     max_images: int = 5
     max_image_size_mb: int = 10
+    disable_thinking: bool = False
     headers: dict[str, str] = Field(default_factory=dict)
 
 
