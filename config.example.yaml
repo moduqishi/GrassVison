@@ -38,7 +38,12 @@ vision_providers:
     timeout: 120
     max_images: 5
     max_image_size_mb: 10
-    disable_thinking: false  # 设为 true 关闭视觉模型思考/推理模式（发送 enable_thinking=false）
+    extra_params: {}  # 自定义请求参数，会合并到视觉模型 /chat/completions payload 中
+    # 关闭思考/推理模式示例（按目标模型文档选择）：
+    #   Qwen-VL:      {"enable_thinking": false}
+    #   部分 Qwen:    {"thinking": false}
+    #   DeepSeek-R1:  {"reasoning_effort": "none"}
+    #   Claude:       {"thinking": {"type": "disabled"}}
     headers: {}
   # 可添加更多视觉渠道，例如：
   # glm:
@@ -50,7 +55,7 @@ vision_providers:
   #   timeout: 120
   #   max_images: 5
   #   max_image_size_mb: 10
-  #   disable_thinking: false
+  #   extra_params: {}
   #   headers: {}
 
 models:

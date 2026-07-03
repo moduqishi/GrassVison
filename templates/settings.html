@@ -57,11 +57,24 @@ function settingsForm() {
         init() {
             // Clear admin password for security
             this.form.admin.password = '';
+            // Restore needsRestart flag across reload (set by saveSettings)
+            if (sessionStorage.getItem('gv_needs_restart') === '1') {
+                this.needsRestart = true;
+                sessionStorage.removeItem('gv_needs_restart');
+            }
         },
         async saveSettings() {
-            const d = await api('PUT', '/api/admin/settings', this.form);
-            showToast('已保存');
-            if (d.needs_restart) this.needsRestart = true;
+            try {
+                const d = await api('PUT', '/api/admin/settings', this.form);
+                showToast('已保存');
+                if (d.needs_restart) {
+                    sessionStorage.setItem('gv_needs_restart', '1');
+                }
+                setTimeout(() => location.reload(), 600);
+            } catch(e) {
+                showToast(e.message || '保存失败', 'error');
+                // 失败不刷新，保留输入
+            }
         }
     }
 }

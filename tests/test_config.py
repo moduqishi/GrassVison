@@ -64,3 +64,72 @@ class TestConfigReload:
         cfg2 = reload_config()
         assert cfg1 is not cfg2
         assert cfg2.server.port == 8042
+
+
+class TestDisableThinkingMigration:
+    """Tests for migrating legacy disable_thinking field to extra_params."""
+
+    def _write_config(self, tmp_path, vision_provider_yaml: str):
+        cfg_content = f"""
+server:
+  host: 127.0.0.1
+  port: 8042
+admin:
+  enabled: false
+vision_providers:
+  test:
+    name: test
+    base_url: http://example.com
+    api_key: sk-test
+    model: test-model
+{vision_provider_yaml}
+models: {{}}
+"""
+        fake = tmp_path / "config.yaml"
+        fake.write_text(cfg_content, encoding="utf-8")
+        return fake
+
+    def test_migrate_disable_thinking_true(self, tmp_path, monkeypatch):
+        import app.config as cfgmod
+
+        fake = self._write_config(tmp_path, "    disable_thinking: true")
+        monkeypatch.setattr(cfgmod, "CONFIG_PATH", fake)
+        monkeypatch.setattr(cfgmod, "_config", None)
+        cfg = load_config()
+        assert cfg.vision_providers["test"].extra_params == {
+            "enable_thinking": False,
+            "thinking": False,
+        }
+
+    def test_migrate_disable_thinking_false(self, tmp_path, monkeypatch):
+        import app.config as cfgmod
+
+        fake = self._write_config(tmp_path, "    disable_thinking: false")
+        monkeypatch.setattr(cfgmod, "CONFIG_PATH", fake)
+        monkeypatch.setattr(cfgmod, "_config", None)
+        cfg = load_config()
+        assert cfg.vision_providers["test"].extra_params == {}
+
+    def test_migrate_disable_thinking_true_with_extra_params(self, tmp_path, monkeypatch):
+        import app.config as cfgmod
+
+        fake = self._write_config(
+            tmp_path,
+            "    disable_thinking: true\n    extra_params:\n      reasoning_effort: none",
+        )
+        monkeypatch.setattr(cfgmod, "CONFIG_PATH", fake)
+        monkeypatch.setattr(cfgmod, "_config", None)
+        cfg = load_config()
+        assert cfg.vision_providers["test"].extra_params == {"reasoning_effort": "none"}
+
+    def test_extra_params_only(self, tmp_path, monkeypatch):
+        import app.config as cfgmod
+
+        fake = self._write_config(
+            tmp_path,
+            "    extra_params:\n      foo: bar",
+        )
+        monkeypatch.setattr(cfgmod, "CONFIG_PATH", fake)
+        monkeypatch.setattr(cfgmod, "_config", None)
+        cfg = load_config()
+        assert cfg.vision_providers["test"].extra_params == {"foo": "bar"}
