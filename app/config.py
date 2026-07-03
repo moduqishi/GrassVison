@@ -1,6 +1,7 @@
 """Configuration loading, reloading, atomic write, and backup."""
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import shutil
@@ -23,6 +24,8 @@ from app.schemas import (
     ImageConfig,
     LoggingConfig,
 )
+
+logger = logging.getLogger(__name__)
 
 # ── Path resolution: frozen (PyInstaller) vs dev ──────────────────
 if getattr(sys, "frozen", False):
@@ -58,6 +61,33 @@ def load_config(reload: bool = False) -> AppConfig:
 
     if raw is None or not isinstance(raw, dict):
         raise ConfigError("Config file is empty or invalid YAML")
+
+    # Migrate legacy disable_thinking field to extra_params
+    vision_providers = raw.get("vision_providers")
+    if isinstance(vision_providers, dict):
+        for key, provider in vision_providers.items():
+            if not isinstance(provider, dict) or "disable_thinking" not in provider:
+                continue
+            disable_thinking = provider.pop("disable_thinking", None)
+            extra_params = provider.get("extra_params")
+            if disable_thinking is True:
+                if not extra_params:
+                    provider["extra_params"] = {"enable_thinking": False, "thinking": False}
+                    logger.warning(
+                        f"Vision provider '{key}': migrated disable_thinking=true to "
+                        f"extra_params={{enable_thinking: false, thinking: false}}; "
+                        f"please update config.yaml manually"
+                    )
+                else:
+                    logger.warning(
+                        f"Vision provider '{key}': both disable_thinking and extra_params "
+                        f"present; keeping extra_params and ignoring disable_thinking"
+                    )
+            else:
+                logger.info(
+                    f"Vision provider '{key}': disable_thinking=false is now the default, "
+                    f"field ignored"
+                )
 
     _config = AppConfig(**raw)
     _config_loaded_at = datetime.now()

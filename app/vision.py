@@ -111,9 +111,8 @@ async def _call_vision_model(
             "stream": False,
             "max_tokens": 4096,
         }
-        if provider_cfg.disable_thinking:
-            payload["enable_thinking"] = False
-            payload["thinking"] = False
+        if provider_cfg.extra_params:
+            payload.update(provider_cfg.extra_params)
         resp = await client.post("/chat/completions", json=payload)
         if resp.status_code != 200:
             raise VisionAnalysisError(f"Vision model returned {resp.status_code}: {resp.text[:500]}")
