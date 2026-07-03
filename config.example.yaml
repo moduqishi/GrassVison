@@ -38,6 +38,7 @@ vision_providers:
     timeout: 120
     max_images: 5
     max_image_size_mb: 10
+    disable_thinking: false  # 设为 true 关闭视觉模型思考/推理模式（发送 enable_thinking=false）
     headers: {}
   # 可添加更多视觉渠道，例如：
   # glm:
@@ -49,6 +50,7 @@ vision_providers:
   #   timeout: 120
   #   max_images: 5
   #   max_image_size_mb: 10
+  #   disable_thinking: false
   #   headers: {}
 
 models:

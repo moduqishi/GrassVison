@@ -5,11 +5,12 @@
 <div x-data="visionProviders()">
     <button class="btn btn-primary" @click="openCreate()">+ 新增视觉渠道</button>
     <table class="data-table">
-        <thead><tr><th>ID</th><th>名称</th><th>Base URL</th><th>默认模型</th><th>最大图片</th><th>状态</th><th>操作</th></tr></thead>
+        <thead><tr><th>ID</th><th>名称</th><th>Base URL</th><th>默认模型</th><th>最大图片</th><th>关闭思考</th><th>状态</th><th>操作</th></tr></thead>
         <tbody>
             <template x-for="(p, key) in providers" :key="key">
                 <tr>
                     <td><code x-text="key"></code></td><td x-text="p.name"></td><td class="truncate" x-text="p.base_url"></td><td x-text="p.model"></td><td x-text="p.max_images"></td>
+                    <td><span :class="p.disable_thinking ? 'badge badge-success' : 'badge badge-muted'" x-text="p.disable_thinking ? '是' : '否'"></span></td>
                     <td><span :class="p.enabled ? 'badge badge-success' : 'badge badge-muted'" x-text="p.enabled ? '启用' : '禁用'"></span></td>
                     <td class="actions">
                         <button class="btn btn-sm btn-outline" @click="editProvider(key, p)">编辑</button>
@@ -32,6 +33,7 @@
                 <div class="form-group"><label>超时 (秒)</label><input class="input" x-model.number="form.timeout" type="number"></div>
                 <div class="form-group"><label>最大图片数</label><input class="input" x-model.number="form.max_images" type="number"></div>
                 <div class="form-group"><label>最大图片大小 (MB)</label><input class="input" x-model.number="form.max_image_size_mb" type="number"></div>
+                <div class="form-group"><label><input type="checkbox" x-model="form.disable_thinking"> 关闭视觉模型思考（关闭推理/思考模式，加快响应）</label><p class="hint">启用后将向视觉模型发送 enable_thinking=false / thinking=false 参数，适用于 Qwen-VL 等支持思考的模型</p></div>
                 <div class="form-group"><label><input type="checkbox" x-model="form.enabled"> 启用</label></div>
                 <div class="form-actions"><button type="submit" class="btn btn-primary">保存</button><button type="button" class="btn btn-ghost" @click="showModal=false">取消</button></div>
             </form>
@@ -57,9 +59,9 @@
 function visionProviders() {
     return {
         providers:{}, showModal:false, editing:false, showTestModal:false, testQuestion:'', testFile:null, testResult:'', testKey:'',
-        form:{key:'', name:'', base_url:'', api_key:'', model:'', timeout:120, max_images:5, max_image_size_mb:10, enabled:true},
+        form:{key:'', name:'', base_url:'', api_key:'', model:'', timeout:120, max_images:5, max_image_size_mb:10, disable_thinking:false, enabled:true},
         async init(){ const d=await api('GET','/api/admin/vision-providers'); this.providers=d.providers||{}; },
-        openCreate(){ this.editing=false; this.form={key:'',name:'',base_url:'',api_key:'',model:'',timeout:120,max_images:5,max_image_size_mb:10,enabled:true}; this.showModal=true; },
+        openCreate(){ this.editing=false; this.form={key:'',name:'',base_url:'',api_key:'',model:'',timeout:120,max_images:5,max_image_size_mb:10,disable_thinking:false,enabled:true}; this.showModal=true; },
         editProvider(key,p){ this.editing=true; this.form={key,...p,api_key:''}; this.showModal=true; },
         async saveProvider(){ const m=this.editing?'PUT':'POST'; const u=this.editing?`/api/admin/vision-providers/${this.form.key}`:'/api/admin/vision-providers'; await api(m,u,this.form); this.showModal=false; showToast(this.editing?'已更新':'已创建'); location.reload(); },
         async deleteProvider(key){ if(!confirm(`确定删除"${key}"？`))return; try{await api('DELETE',`/api/admin/vision-providers/${key}`);showToast('已删除');location.reload();}catch(e){showToast(e.message,'error');} },
