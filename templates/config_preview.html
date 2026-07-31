@@ -18,7 +18,7 @@
 <script>
 function configPreview() {
     return {
-        yamlContent:`{{ config_yaml | e }}`, error:'',
+        yamlContent: {{ config_yaml | tojson }}, error:'',
         downloadConfig(){ window.open('/api/admin/config/download'); },
         async reloadConfig(){ await api('POST','/api/admin/reload'); showToast('配置已重新加载'); location.reload(); },
         async saveYaml(){ try{ await api('PUT','/api/admin/config/yaml',{yaml:this.yamlContent}); showToast('配置已保存'); this.error=''; }catch(e){ this.error=e.message; showToast(e.message,'error'); } }
