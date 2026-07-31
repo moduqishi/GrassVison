@@ -134,7 +134,13 @@ def backup_config() -> Path:
 
 
 def save_config(config: AppConfig) -> None:
-    """Atomically save config: backup -> write .tmp -> validate -> replace."""
+    """Save config: backup -> write .tmp -> validate -> copy to target.
+
+    用 shutil.copy2 而非 os.replace，以保留目标文件的 inode。
+    这是 Docker 单文件 bind mount (`./config.yaml:/app/config.yaml`) 的必要妥协：
+    os.replace 会换掉 inode，宿主机文件不会同步更新，导致保存「只在内存里」、容器重启后丢失。
+    copy2 保留原 inode，bind mount 同步正常；原子性由先写临时文件 + 校验 + 备份兜底。
+    """
     raw = config.model_dump(exclude_none=False, mode="python")
     yaml_str = yaml.dump(raw, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
@@ -149,10 +155,11 @@ def save_config(config: AppConfig) -> None:
         with open(tmp_path, "r", encoding="utf-8") as f:
             yaml.safe_load(f)
 
-        os.replace(tmp_path, CONFIG_PATH)
+        shutil.copy2(tmp_path, CONFIG_PATH)
     except Exception:
-        Path(tmp_path).unlink(missing_ok=True)
         raise ConfigError("Failed to write config: validation error. Original config preserved.")
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
 
 
 def read_yaml_file(path: str) -> dict:
