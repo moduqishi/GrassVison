@@ -4,7 +4,7 @@ server:
   host: 127.0.0.1
   port: 8042
   access_key: ''
-  request_timeout: 180
+  request_timeout: 600
 
 admin:
   enabled: true
@@ -12,72 +12,71 @@ admin:
   password: admin123
 
 source_providers:
-  openai:
-    name: openai
+  cpa:
+    name: cpa
     enabled: true
-    base_url: https://api.openai.com/v1
-    api_key: sk-your-openai-api-key
-    timeout: 120
+    base_url: https://api.555615.xyz/v1
+    api_key: sk-your-api-key
+    timeout: 999999999999999
     headers: {}
-  # 可添加更多源渠道，例如：
-  # deepseek:
-  #   name: deepseek
-  #   enabled: true
-  #   base_url: https://api.deepseek.com/v1
-  #   api_key: sk-your-deepseek-key
-  #   timeout: 120
-  #   headers: {}
 
 vision_providers:
-  openai:
-    name: openai
+  vivo:
+    name: vivo
     enabled: true
-    base_url: https://api.openai.com/v1
-    api_key: sk-your-openai-api-key
-    model: ''
-    timeout: 120
-    max_images: 5
-    max_image_size_mb: 10
-    extra_params: {}  # 自定义请求参数，会合并到视觉模型 /chat/completions payload 中
-    # 关闭思考/推理模式示例（按目标模型文档选择）：
-    #   Qwen-VL:      {"enable_thinking": false}
-    #   部分 Qwen:    {"thinking": false}
-    #   DeepSeek-R1:  {"reasoning_effort": "none"}
-    #   Claude:       {"thinking": {"type": "disabled"}}
+    base_url: https://api-ai.vivo.com.cn/v1
+    api_key: sk-your-vivo-api-key
+    model: Doubao-Seed-2.0-mini
+    timeout: 1000000000000000
+    max_images: 1000000000000000
+    max_image_size_mb: 1000000000000000
+    extra_params: {}
     headers: {}
-  # 可添加更多视觉渠道，例如：
-  # glm:
-  #   name: glm
-  #   enabled: true
-  #   base_url: https://open.bigmodel.cn/api/paas/v4
-  #   api_key: your-glm-key
-  #   model: glm-4v-flash
-  #   timeout: 120
-  #   max_images: 5
-  #   max_image_size_mb: 10
-  #   extra_params: {}
-  #   headers: {}
 
 models:
-  openai-vision:
-    name: openai-vision
+  deepseek-v4-flash-vision:
+    name: deepseek-v4-flash-vision
     enabled: true
-    source_provider: openai
-    source_model: gpt-4o-mini
+    source_provider: cpa
+    source_model: deepseek-v4-flash
     vision_enabled: true
-    vision_provider: openai
-    vision_model: gpt-4o-mini
+    vision_provider: vivo
+    vision_model: ''
+    vision_prompt: prompts/default.txt
+    vision_failure_mode: error
+    replace_response_model: true
+    cache_prompt: null
+  deepseek-v4-pro-vision:
+    name: deepseek-v4-pro-vision
+    enabled: true
+    source_provider: cpa
+    source_model: deepseek-v4-pro
+    vision_enabled: true
+    vision_provider: vivo
+    vision_model: ''
+    vision_prompt: prompts/default.txt
+    vision_failure_mode: error
+    replace_response_model: true
+    cache_prompt: null
+  glm-5.2-vision:
+    name: glm-5.2-vision
+    enabled: true
+    source_provider: cpa
+    source_model: glm-5.2
+    vision_enabled: true
+    vision_provider: vivo
+    vision_model: ''
     vision_prompt: prompts/default.txt
     vision_failure_mode: error
     replace_response_model: true
     cache_prompt: null
 
 image:
-  max_images: 5
-  max_image_size_mb: 10
-  max_total_size_mb: 30
-  max_width: 4096
-  max_height: 4096
+  max_images: 1000000000000000
+  max_image_size_mb: 1000000000000000
+  max_total_size_mb: 1000000000000000
+  max_width: 1000000000000000
+  max_height: 1000000000000000
   download_timeout: 20
   allow_private_network: false
   multi_image_mode: independent
