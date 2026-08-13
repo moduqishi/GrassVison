@@ -137,6 +137,15 @@
                             <label>单张最大（MB）</label>
                             <input class="input" x-model.number="form.max_image_size_mb" type="number" min="1">
                         </div>
+                        <div class="form-group">
+                            <label>图片 detail 参数</label>
+                            <select class="input" x-model="form.image_detail">
+                                <option value="">不发送（推荐，兼容 MiniMax 等渠道）</option>
+                                <option value="auto">auto</option>
+                                <option value="low">low</option>
+                                <option value="high">high</option>
+                            </select>
+                        </div>
                     </div>
 
                     <div class="form-group" style="margin-top:18px">
@@ -240,11 +249,11 @@ function visionProviders() {
     return {
         providers:{}, showModal:false, editing:false,
         showTestModal:false, testQuestion:'', testFile:null, testResult:'', testOk:false, testType:'', testKey:'', testing:false,
-        form:{key:'', name:'', base_url:'', api_key:'', model:'', timeout:120, max_images:5, max_image_size_mb:10, extra_params:[], enabled:true},
+        form:{key:'', name:'', base_url:'', api_key:'', model:'', timeout:120, max_images:5, max_image_size_mb:10, image_detail:'', extra_params:[], enabled:true},
         async init(){ const d=await api('GET','/api/admin/vision-providers'); this.providers=d.providers||{}; },
         openCreate(){
             this.editing=false;
-            this.form={key:'',name:'',base_url:'',api_key:'',model:'',timeout:120,max_images:5,max_image_size_mb:10,extra_params:[],enabled:true};
+            this.form={key:'',name:'',base_url:'',api_key:'',model:'',timeout:120,max_images:5,max_image_size_mb:10,image_detail:'',extra_params:[],enabled:true};
             this.showModal=true;
             this.$nextTick(()=>{ if(this.$refs.firstInput) this.$refs.firstInput.focus(); });
         },

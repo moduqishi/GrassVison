@@ -30,6 +30,7 @@ vision_providers:
     timeout: 1000000000000000
     max_images: 1000000000000000
     max_image_size_mb: 1000000000000000
+    image_detail: ''
     extra_params: {}
     headers: {}
 

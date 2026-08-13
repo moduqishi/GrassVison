@@ -93,7 +93,11 @@ async def _call_vision_model(
 
     content_parts: list[dict] = []
     for url in image_urls:
-        content_parts.append({"type": "image_url", "image_url": {"url": url, "detail": "auto"}})
+        image_part: dict = {"type": "image_url", "image_url": {"url": url}}
+        # detail 字段按渠道配置发送；默认不发送（MiniMax 等渠道会拒绝 detail=auto）
+        if provider_cfg.image_detail:
+            image_part["image_url"]["detail"] = provider_cfg.image_detail
+        content_parts.append(image_part)
     content_parts.append({"type": "text", "text": user_question})
 
     vision_messages = [

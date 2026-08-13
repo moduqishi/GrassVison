@@ -24,6 +24,7 @@ class VisionProviderConfig(BaseModel):
     timeout: int = 120
     max_images: int = 5
     max_image_size_mb: int = 10
+    image_detail: str = ""  # 发送给视觉模型的 image_url.detail 值: "" | "auto" | "low" | "high"; 空 = 不发送该字段
     extra_params: dict[str, Any] = Field(default_factory=dict)
     headers: dict[str, str] = Field(default_factory=dict)
 
