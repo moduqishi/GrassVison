@@ -75,6 +75,14 @@ def _is_logged_in(request: Request) -> bool:
     return bool(token and validate_session(token))
 
 
+def _css_version() -> int:
+    """Cache-busting version for admin.css (file mtime, stable per build)."""
+    try:
+        return int((BUNDLE_DIR / "static" / "css" / "admin.css").stat().st_mtime)
+    except OSError:
+        return 1
+
+
 def _admin_context(request: Request) -> dict:
     cfg = get_config()
     return {
@@ -85,6 +93,7 @@ def _admin_context(request: Request) -> dict:
         "model_count": len(cfg.models),
         "enabled_model_count": sum(1 for m in cfg.models.values() if m.enabled),
         "logged_in": _is_logged_in(request),
+        "css_version": _css_version(),
     }
 
 
@@ -92,7 +101,7 @@ def _admin_context(request: Request) -> dict:
 
 @router.get("/admin/login", response_class=HTMLResponse)
 async def login_page(request: Request):
-    return _render(request, "login.html")
+    return _render(request, "login.html", {"css_version": _css_version()})
 
 
 @router.post("/api/admin/login")
