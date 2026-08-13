@@ -504,6 +504,7 @@ select.input:focus { background-image: url("data:image/svg+xml,%3Csvg xmlns='htt
 }
 .modal-wide { max-width: 760px; }
 .modal-head {
+  flex: none;
   display: flex; align-items: center; gap: 12px;
   padding: 18px 22px;
   border-bottom: 1px solid var(--border);
@@ -527,12 +528,14 @@ select.input:focus { background-image: url("data:image/svg+xml,%3Csvg xmlns='htt
   transition: all var(--dur) var(--ease);
 }
 .modal-close:hover { background: var(--bg-hover); color: var(--text); }
-.modal-body { padding: 20px 22px; overflow-y: auto; }
+.modal-body { flex: 1 1 auto; min-height: 0; padding: 20px 22px; overflow-y: auto; overscroll-behavior: contain; }
 .modal-foot {
+  flex: none;
   display: flex; align-items: center; justify-content: flex-end; gap: 9px;
   padding: 14px 22px;
   border-top: 1px solid var(--border);
   background: var(--bg-subtle);
+  border-radius: 0 0 var(--radius) var(--radius);
 }
 @keyframes modalIn { from { opacity: 0; transform: translateY(10px) scale(0.98); } to { opacity: 1; transform: none; } }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
