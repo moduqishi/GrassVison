@@ -199,3 +199,52 @@ class TestCurrentImageOnly:
         assert "image_url" not in joined
         assert "测试描述" in joined
         assert "grassvision_image_context" in joined
+
+    def test_image_and_text_in_separate_messages_still_analyzed(self):
+        """客户端把图片和文字分成两条用户消息发（无 assistant 回复间隔）→ 图片仍视为当前。"""
+        from app.proxy import handle_chat_completion
+        request = ChatCompletionRequest(
+            model="openai-vision",
+            messages=[
+                ChatMessage(role="user", content=[
+                    {"type": "image_url", "image_url": {"url": TINY_PNG}},
+                ]),
+                ChatMessage(role="user", content="这张图是什么?"),
+            ],
+            stream=False,
+        )
+        vision = _FakeVisionClient()
+        source = _FakeSourceClient()
+        with patch("app.vision.get_vision_client", return_value=vision), \
+             patch("app.proxy.get_source_client", return_value=source):
+            import asyncio
+            asyncio.run(handle_chat_completion(request, _RawReq()))
+        joined = json.dumps(source.body["messages"], ensure_ascii=False)
+        assert "测试描述" in joined, "分条发送的图片应被当作当前图片并注入描述"
+        assert "grassvision_image_context" in joined
+
+    def test_images_before_last_assistant_reply_are_historical(self):
+        """最后一条 assistant 回复之前的图片 → 属于更早轮次，剥离且不调视觉。"""
+        from app.proxy import handle_chat_completion
+        request = ChatCompletionRequest(
+            model="openai-vision",
+            messages=[
+                ChatMessage(role="user", content=[
+                    {"type": "image_url", "image_url": {"url": TINY_PNG}},
+                    {"type": "text", "text": "看这张图"},
+                ]),
+                ChatMessage(role="assistant", content="看到了。"),
+                ChatMessage(role="user", content="继续"),
+            ],
+            stream=False,
+        )
+        vision = _FakeVisionClient()
+        source = _FakeSourceClient()
+        with patch("app.vision.get_vision_client", return_value=vision), \
+             patch("app.proxy.get_source_client", return_value=source):
+            import asyncio
+            asyncio.run(handle_chat_completion(request, _RawReq()))
+        assert vision.post_calls == []
+        joined = json.dumps(source.body["messages"], ensure_ascii=False)
+        assert "image_url" not in joined
+        assert "grassvision_image_context" not in joined

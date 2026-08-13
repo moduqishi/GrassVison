@@ -117,6 +117,30 @@ def extract_images_from_last_user_message(messages: list[dict]) -> set[ImagePosi
     return set()
 
 
+def extract_current_turn_positions(messages: list[dict]) -> set[ImagePosition]:
+    """返回「当前轮次」的图片位置。
+
+    当前轮次 = 最后一次 assistant 消息之后的全部消息（含多条连续用户消息）。
+    兼容客户端把「图片」和「文字」分成两条用户消息发送的情况；
+    最后一次 assistant 回复之前的图片视为历史，不再处理。
+    """
+    positions = set()
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i].get("role") == "assistant":
+            break
+        if messages[i].get("role") != "user":
+            continue
+        content = messages[i].get("content")
+        if not isinstance(content, list):
+            continue
+        for ci, part in enumerate(content):
+            if isinstance(part, dict) and part.get("type") == "image_url":
+                img = part.get("image_url", {})
+                if img.get("url", ""):
+                    positions.add(ImagePosition(message_index=i, content_index=ci))
+    return positions
+
+
 def extract_user_question(messages: list) -> str:
     for msg in reversed(messages):
         if msg.get("role") == "user":

@@ -16,7 +16,7 @@ from app.errors import ModelNotFoundError, VisionAnalysisError, ProviderError
 from app.image_utils import (
     ExtractedImage,
     extract_all_images_with_positions,
-    extract_images_from_last_user_message,
+    extract_current_turn_positions,
     inject_image_descriptions,
     assert_no_image_url_blocks,
     extract_user_question,
@@ -138,10 +138,11 @@ async def handle_chat_completion(
     # ── 1. Extract all images with positions ─────────────────────
     all_images = extract_all_images_with_positions(messages_raw)
 
-    # ── 1.5 只处理当前（最后一条用户消息）里的图片 ──────────────
-    # 历史消息里的图片一律剥离：不分析、不注入、不参与流式思考。
-    # 解决：无关图片污染上下文、模型反复提及旧图、纯文字追问也被拖慢首 token。
-    current_positions = extract_images_from_last_user_message(messages_raw)
+    # ── 1.5 只处理「当前轮次」里的图片 ────────────────────────
+    # 当前轮次 = 最后一次 assistant 回复之后的用户消息（兼容图片/文字分两条消息发）。
+    # 更早轮次的图片一律剥离：不分析、不注入、不参与流式思考。
+    # 解决：无关图片污染上下文、模型反复提及旧图、纯文字追问被拖慢首 token。
+    current_positions = extract_current_turn_positions(messages_raw)
     current_images = [img for img in all_images if img.position in current_positions]
 
     if not current_images or not model.vision_enabled:
