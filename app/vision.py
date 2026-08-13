@@ -170,6 +170,22 @@ async def _call_vision_model_stream(
     model = model_id or provider_cfg.model
     client = get_vision_client(provider_cfg)
     start = time.time()
+
+    async def _stream_fallback():
+        """流式不可用（渠道不支持 stream / 响应无增量）时回退非流式调用，
+        并把完整分析结果一次性放进思考链，保证视觉阶段始终可见。"""
+        result = await _call_vision_model(
+            provider_id=provider_id,
+            model_id=model_id,
+            system_prompt=system_prompt,
+            user_question=user_question,
+            image_urls=image_urls,
+            request_client=request_client,
+        )
+        if emit and result.get("result"):
+            await emit("content", result["result"])
+        return result
+
     try:
         payload = {
             "model": model,
@@ -181,8 +197,8 @@ async def _call_vision_model_stream(
             payload.update(provider_cfg.extra_params)
         async with client.stream("POST", "/chat/completions", json=payload) as resp:
             if resp.status_code != 200:
-                error_body = (await resp.aread()).decode("utf-8", errors="replace")
-                raise VisionAnalysisError(f"Vision model returned {resp.status_code}: {error_body[:500]}")
+                # 该渠道可能不支持 stream=true：回退为非流式调用
+                return await _stream_fallback()
             result_parts: list[str] = []
             token_usage: dict | None = None
             async for line in resp.aiter_lines():
@@ -207,6 +223,9 @@ async def _call_vision_model_stream(
                         await emit("content", content)
                 if data.get("usage"):
                     token_usage = data["usage"]
+            if not result_parts:
+                # 流式响应里没有产出任何内容增量：回退非流式，保证分析结果仍出现
+                return await _stream_fallback()
             elapsed = time.time() - start
             return {
                 "result": "".join(result_parts),
@@ -318,12 +337,18 @@ async def resolve_image_descriptions(
         if status_str == "cached" and cached_entry:
             url_results[url] = cached_entry.result
             url_to_status[url] = "cached"
+            # 缓存命中：若处于流式透传模式，把缓存的分析结果也放进思考链，
+            # 保证视觉阶段始终有可见内容（而不是只有一条预提示）。
+            if stream_queue is not None and cached_entry.result:
+                await stream_queue.put(("token", "content", cached_entry.result))
         elif status_str == "waiter":
             # Wait for inflight
             try:
                 entry = await cache.wait_inflight(cache_key)
                 url_results[url] = entry.result
                 url_to_status[url] = "cached"
+                if stream_queue is not None and entry.result:
+                    await stream_queue.put(("token", "content", entry.result))
             except Exception:
                 url_results[url] = "[图片分析超时]"
                 url_to_status[url] = "error"

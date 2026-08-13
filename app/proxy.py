@@ -392,7 +392,7 @@ async def _combined_stream(
 
     # 立即推一条预提示，消除图片下载/视觉模型首字前的静默等待
     prelude, is_first["value"] = _build_vision_frame(
-        "【正在分析用户发送的图片…】", public_model_id, stream_id, True
+        "【正在处理用户发送的图片…】", public_model_id, stream_id, True
     )
     yield prelude
 
