@@ -1,6 +1,7 @@
 """Core proxy: chat completions routing, streaming, and vision enhancement."""
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import uuid
@@ -32,6 +33,29 @@ def _find_model(model_id: str) -> EnhancedModelConfig:
     if not model or not model.enabled:
         raise ModelNotFoundError(model_id)
     return model
+
+
+# 思考链引导：当模型开启 thinking_guidance 时注入系统提示，
+# 要求源模型在推理过程中引用图片分析结果。
+_THINKING_GUIDANCE_TEXT = (
+    "用户消息的 <grassvision_image_context> 标签内附带了从用户上传图片中自动提取的分析信息。\n"
+    "请先在你的思考过程（推理链）中仔细阅读并引用这些图片分析信息，"
+    "结合图片内容完成推理后，再回答用户的问题。"
+)
+
+
+def _inject_thinking_guidance(messages: list[dict]) -> list[dict]:
+    """把思考链引导追加到已有的 system 消息；没有 system 消息则在最前面插入一条。"""
+    guidance = _THINKING_GUIDANCE_TEXT
+    for i, msg in enumerate(messages):
+        if msg.get("role") == "system":
+            content = msg.get("content")
+            if isinstance(content, str):
+                messages[i] = {**msg, "content": f"{content}\n\n{guidance}"}
+            else:
+                messages[i] = {"role": "system", "content": guidance}
+            return messages
+    return [{"role": "system", "content": guidance}, *messages]
 
 
 def _build_source_body(request: ChatCompletionRequest, model: EnhancedModelConfig, messages: list[dict]) -> dict:
@@ -77,6 +101,28 @@ def _openai_error_response(status: int, message: str, error_type: str = "grassvi
         status_code=status,
         content={"error": {"message": message, "type": error_type, "code": status}},
     )
+
+
+def _build_vision_frame(
+    text: str,
+    public_model_id: str,
+    stream_id: str,
+    is_first: bool,
+) -> tuple[str, bool]:
+    """把视觉模型的分析增量包装成 SSE chunk，统一放入 delta.reasoning_content，
+    使客户端把它们显示为思考链的一部分（与源模型的思考链无缝衔接）。"""
+    delta: dict = {}
+    if is_first:
+        delta["role"] = "assistant"
+    delta["reasoning_content"] = text
+    data = {
+        "id": stream_id,
+        "object": "chat.completion.chunk",
+        "created": int(time.time()),
+        "model": public_model_id,
+        "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
+    }
+    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n", False
 
 
 async def handle_chat_completion(
@@ -131,6 +177,22 @@ async def handle_chat_completion(
     # Validate image count
     if len(all_images) > cfg.image.max_images:
         return _openai_error_response(400, f"Too many images: {len(all_images)} > {cfg.image.max_images}")
+
+    # ── 2.5 流式透传视觉思考：不阻塞等待分析，先流式显示视觉模型的
+    #     思考/分析过程，再无缝衔接源模型（需模型开启 stream_vision_thinking）─
+    if request.stream and model.stream_vision_thinking:
+        return StreamingResponse(
+            _combined_stream(
+                request=request,
+                model=model,
+                messages_raw=messages_raw,
+                all_images=all_images,
+                current_positions=current_positions,
+                raw_request=raw_request,
+            ),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+        )
 
     # ── 3. Resolve all image descriptions (cache + vision calls) ─
     try:
@@ -195,10 +257,14 @@ async def handle_chat_completion(
                 enhanced_messages[i]["content"] = list(content) + [{"type": "text", "text": f"\n{injection}"}]
             break
 
-    # ── 6. Assert no image_url blocks remain ────────────────────
+    # ── 6. 思考链引导：让源模型在推理时引用图片分析 ──────────
+    if model.thinking_guidance:
+        enhanced_messages = _inject_thinking_guidance(enhanced_messages)
+
+    # ── 7. Assert no image_url blocks remain ────────────────────
     assert_no_image_url_blocks(enhanced_messages)
 
-    # ── 7. Forward to source model ──────────────────────────────
+    # ── 8. Forward to source model ──────────────────────────────
     body = _build_source_body(request, model, enhanced_messages)
 
     if request.stream:
@@ -237,6 +303,166 @@ async def handle_chat_completion(
     return resp
 
 
+async def _iter_source_stream(
+    body: dict,
+    provider_key: str,
+    public_model_id: str,
+    on_usage: callable | None = None,
+):
+    """流式转发源模型：逐行 yield SSE 内容；收到 usage chunk 时回调 on_usage。"""
+    cfg = get_config()
+    provider = cfg.source_providers.get(provider_key)
+    if not provider:
+        raise ProviderError(f"Source provider '{provider_key}' not found", provider=provider_key)
+    if not provider.enabled:
+        raise ProviderError(f"Source provider '{provider_key}' is disabled", provider=provider_key, status_code=503)
+
+    client = get_source_client(provider)
+    try:
+        async with client.stream("POST", "/chat/completions", json=body) as resp:
+            if resp.status_code != 200:
+                error_body = await resp.aread()
+                error_data = json.dumps({
+                    "error": {
+                        "message": error_body.decode(errors="replace")[:500],
+                        "type": "upstream_error",
+                        "code": resp.status_code,
+                    }
+                })
+                yield f"data: {error_data}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+            first_chunk = True
+            async for line in resp.aiter_lines():
+                if not line:
+                    yield "\n"
+                    continue
+                if line.startswith("data: "):
+                    data_str = line[6:].strip()
+                    if data_str == "[DONE]":
+                        yield "data: [DONE]\n\n"
+                        continue
+                    u = _extract_usage_from_chunk(data_str)
+                    if u and on_usage:
+                        on_usage(u)
+                    if first_chunk:
+                        line = _sanitize_stream_chunk(line, public_model_id, True)
+                        first_chunk = False
+                    else:
+                        line = _sanitize_stream_chunk(line, public_model_id, False)
+                    yield line + "\n"
+                elif line.strip():
+                    yield line + "\n"
+    except httpx.TimeoutException:
+        yield f"data: {json.dumps({'error': {'message': 'Source model timeout'}})}\n\n"
+        yield "data: [DONE]\n\n"
+    finally:
+        await client.aclose()
+
+
+async def _combined_stream(
+    request: ChatCompletionRequest,
+    model: EnhancedModelConfig,
+    messages_raw: list[dict],
+    all_images: list,
+    current_positions: set,
+    raw_request: Request,
+):
+    """流式透传视觉模型的思考/分析过程，再无缝衔接源模型的思考与回答（单条 SSE 流）。
+
+    阶段 1：视觉分析调用改为流式，增量以 reasoning_content 形式推给客户端，
+            用户发完图立即能看到图像模型的思考链，不再静默等待。
+    阶段 2：图片描述注入完成后，直接衔接源模型流式转发（思考链 + 回答）。
+    """
+    cfg = get_config()
+    stats_tracker = get_stats()
+    public_model_id = request.model if model.replace_response_model else model.source_model
+    stream_id = f"chatcmpl-{uuid.uuid4().hex}"
+    queue: asyncio.Queue = asyncio.Queue()
+    is_first = {"value": True}
+
+    # ── 阶段 1：流式视觉分析 ───────────────────────────────────
+    async def _resolve():
+        try:
+            return await resolve_image_descriptions(
+                images=all_images,
+                model_config=model,
+                allow_analysis_positions=current_positions,
+                historical_cache_miss=cfg.image.historical_cache_miss,
+                request_client=getattr(raw_request, "_httpx_client", None),
+                user_question=extract_user_question(messages_raw),
+                stream_queue=queue,
+            )
+        finally:
+            # 保证消费端一定能等到结束标记（即使内部抛异常也不会挂起）
+            await queue.put(("done", "", ""))
+
+    try:
+        task = asyncio.create_task(_resolve())
+        while True:
+            item = await queue.get()
+            if item[0] == "done":
+                break
+            frame, is_first["value"] = _build_vision_frame(
+                item[2], public_model_id, stream_id, is_first["value"]
+            )
+            yield frame
+        descriptions, vision_usage = await task
+    except VisionAnalysisError as e:
+        if model.vision_failure_mode != "skip":
+            error_data = json.dumps({
+                "error": {"message": f"Vision analysis failed: {e.message}",
+                          "type": "grassvision_error", "code": 502},
+            })
+            yield f"data: {error_data}\n\n"
+            yield "data: [DONE]\n\n"
+            return
+        # skip：直接用原始消息转发源模型
+        body = _build_source_body(request, model, messages_raw)
+        def _on_skip_usage(usage):
+            stats_tracker.record_call(
+                model=request.model, images=len(all_images),
+                stream=True, elapsed=0,
+                vision_used=True, vision_success=False,
+                vision_tokens=None, source_tokens=usage,
+            )
+        async for line in _iter_source_stream(body, model.source_provider, public_model_id, on_usage=_on_skip_usage):
+            yield line
+        return
+
+    # ── 阶段 2：注入描述并衔接源模型流 ────────────────────────
+    enhanced_messages = inject_image_descriptions(messages_raw, descriptions)
+    merged = _merge_and_number_descriptions(descriptions)
+    injection = _build_injection_text(merged)
+
+    for i in range(len(enhanced_messages) - 1, -1, -1):
+        if enhanced_messages[i].get("role") == "user":
+            content = enhanced_messages[i].get("content")
+            if isinstance(content, str):
+                enhanced_messages[i]["content"] = f"{content}\n\n{injection}"
+            elif isinstance(content, list):
+                enhanced_messages[i]["content"] = list(content) + [{"type": "text", "text": f"\n{injection}"}]
+            break
+
+    if model.thinking_guidance:
+        enhanced_messages = _inject_thinking_guidance(enhanced_messages)
+    assert_no_image_url_blocks(enhanced_messages)
+
+    body = _build_source_body(request, model, enhanced_messages)
+
+    def _on_source_usage(usage):
+        stats_tracker.record_call(
+            model=request.model, images=len(all_images),
+            stream=True, elapsed=0,
+            vision_used=bool(vision_usage), vision_success=True,
+            vision_tokens=vision_usage if vision_usage else None,
+            source_tokens=usage,
+        )
+
+    async for line in _iter_source_stream(body, model.source_provider, public_model_id, on_usage=_on_source_usage):
+        yield line
+
+
 async def _forward_to_source(
     body: dict,
     provider_key: str,
@@ -268,51 +494,9 @@ async def _forward_to_source(
         finally:
             await client.aclose()
 
-    usage_holder: list[dict | None] = [None]
-
     async def _stream_with_tracking():
-        first_chunk = True
-        try:
-            async with client.stream("POST", "/chat/completions", json=body) as resp:
-                if resp.status_code != 200:
-                    error_body = await resp.aread()
-                    error_data = json.dumps({
-                        "error": {
-                            "message": error_body.decode()[:500],
-                            "type": "upstream_error",
-                            "code": resp.status_code,
-                        }
-                    })
-                    yield f"data: {error_data}\n\n"
-                    yield "data: [DONE]\n\n"
-                    return
-                async for line in resp.aiter_lines():
-                    if not line:
-                        yield "\n"
-                        continue
-                    if line.startswith("data: "):
-                        data_str = line[6:].strip()
-                        if data_str == "[DONE]":
-                            yield "data: [DONE]\n\n"
-                            continue
-                        u = _extract_usage_from_chunk(data_str)
-                        if u:
-                            usage_holder[0] = u
-                            if on_usage:
-                                on_usage(u)
-                        if first_chunk:
-                            line = _sanitize_stream_chunk(line, public_model_id, True)
-                            first_chunk = False
-                        else:
-                            line = _sanitize_stream_chunk(line, public_model_id, False)
-                        yield line + "\n"
-                    elif line.strip():
-                        yield line + "\n"
-        except httpx.TimeoutException:
-            yield f"data: {json.dumps({'error': {'message': 'Source model timeout'}})}\n\n"
-            yield "data: [DONE]\n\n"
-        finally:
-            await client.aclose()
+        async for line in _iter_source_stream(body, provider_key, public_model_id, on_usage=on_usage):
+            yield line
 
     return (
         StreamingResponse(
@@ -320,5 +504,5 @@ async def _forward_to_source(
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
         ),
-        usage_holder[0],
+        None,
     )

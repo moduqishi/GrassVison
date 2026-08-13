@@ -1,7 +1,9 @@
 """Vision analysis: prompt loading, vision model calling, caching, and result injection."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import json
 import time
 from pathlib import Path
 
@@ -135,6 +137,89 @@ async def _call_vision_model(
         await client.aclose()
 
 
+async def _call_vision_model_stream(
+    provider_id: str,
+    model_id: str,
+    system_prompt: str,
+    user_question: str,
+    image_urls: list[str],
+    request_client: httpx.AsyncClient | None = None,
+    emit: callable | None = None,
+) -> dict:
+    """流式调用视觉模型：边接收边通过 emit(kind, text) 透传增量（kind ∈ {"reasoning", "content"}）。
+    返回 {'result', 'model', 'elapsed', 'token_usage'}，与 _call_vision_model 一致。"""
+    from app.config import get_config
+    cfg = get_config()
+    provider_cfg = cfg.vision_providers.get(provider_id)
+    if not provider_cfg or not provider_cfg.enabled:
+        raise VisionAnalysisError(f"Vision provider '{provider_id}' not found or disabled")
+
+    content_parts: list[dict] = []
+    for url in image_urls:
+        image_part: dict = {"type": "image_url", "image_url": {"url": url}}
+        if provider_cfg.image_detail:
+            image_part["image_url"]["detail"] = provider_cfg.image_detail
+        content_parts.append(image_part)
+    content_parts.append({"type": "text", "text": user_question})
+
+    vision_messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": content_parts},
+    ]
+
+    model = model_id or provider_cfg.model
+    client = get_vision_client(provider_cfg)
+    start = time.time()
+    try:
+        payload = {
+            "model": model,
+            "messages": vision_messages,
+            "stream": True,
+            "max_tokens": 4096,
+        }
+        if provider_cfg.extra_params:
+            payload.update(provider_cfg.extra_params)
+        async with client.stream("POST", "/chat/completions", json=payload) as resp:
+            if resp.status_code != 200:
+                error_body = (await resp.aread()).decode("utf-8", errors="replace")
+                raise VisionAnalysisError(f"Vision model returned {resp.status_code}: {error_body[:500]}")
+            result_parts: list[str] = []
+            token_usage: dict | None = None
+            async for line in resp.aiter_lines():
+                if not line.startswith("data: "):
+                    continue
+                data_str = line[6:].strip()
+                if data_str == "[DONE]":
+                    break
+                try:
+                    data = json.loads(data_str)
+                except json.JSONDecodeError:
+                    continue
+                delta = ((data.get("choices") or [{}])[0].get("delta")) or {}
+                reasoning = delta.get("reasoning_content")
+                if reasoning:
+                    if emit:
+                        await emit("reasoning", reasoning)
+                content = delta.get("content")
+                if content:
+                    result_parts.append(content)
+                    if emit:
+                        await emit("content", content)
+                if data.get("usage"):
+                    token_usage = data["usage"]
+            elapsed = time.time() - start
+            return {
+                "result": "".join(result_parts),
+                "model": model,
+                "elapsed": elapsed,
+                "token_usage": token_usage,
+            }
+    except httpx.TimeoutException:
+        raise VisionAnalysisError(f"Vision model request timed out after {provider_cfg.timeout}s")
+    finally:
+        await client.aclose()
+
+
 async def resolve_image_descriptions(
     images: list[ExtractedImage],
     model_config,
@@ -142,6 +227,7 @@ async def resolve_image_descriptions(
     historical_cache_miss: str = "analyze",
     request_client: httpx.AsyncClient | None = None,
     user_question: str = "",
+    stream_queue: asyncio.Queue | None = None,
 ) -> tuple[dict[ImagePosition, str], dict]:
     """
     Main entry point for resolving all image descriptions.
@@ -152,6 +238,8 @@ async def resolve_image_descriptions(
     - Only positions in allow_analysis_positions trigger NEW vision calls.
     - Historical images with cache misses are handled per historical_cache_miss.
     - Same cache_key is deduplicated within a single request.
+    - 传入 stream_queue 时，新发起的视觉调用改为流式：每个增量以 ("token", kind, text)
+      放入队列（kind ∈ {"reasoning", "content"}），全部处理结束后放入 ("done", "", "")。
     """
     cfg = get_config()
     cache = get_image_cache()
@@ -249,14 +337,27 @@ async def resolve_image_descriptions(
                         vision_user_question = "请根据 system prompt 中的要求分析这张图片。"
                     else:
                         vision_user_question = user_question or "请分析这张图片的内容。"
-                    result = await _call_vision_model(
-                        provider_id=provider_id,
-                        model_id=str(model_id),
-                        system_prompt=prompt_to_use,
-                        user_question=vision_user_question,
-                        image_urls=[resolved_url],
-                        request_client=request_client,
-                    )
+                    if stream_queue is not None:
+                        async def _emit(kind: str, text: str) -> None:
+                            await stream_queue.put(("token", kind, text))
+                        result = await _call_vision_model_stream(
+                            provider_id=provider_id,
+                            model_id=str(model_id),
+                            system_prompt=prompt_to_use,
+                            user_question=vision_user_question,
+                            image_urls=[resolved_url],
+                            request_client=request_client,
+                            emit=_emit,
+                        )
+                    else:
+                        result = await _call_vision_model(
+                            provider_id=provider_id,
+                            model_id=str(model_id),
+                            system_prompt=prompt_to_use,
+                            user_question=vision_user_question,
+                            image_urls=[resolved_url],
+                            request_client=request_client,
+                        )
                     url_results[url] = result["result"]
                     url_to_status[url] = "new"
 
@@ -321,6 +422,9 @@ async def resolve_image_descriptions(
         result_text = url_results.get(url, "[未知错误]")
         for img in img_list:
             descriptions[img.position] = result_text
+
+    if stream_queue is not None:
+        await stream_queue.put(("done", "", ""))
 
     return descriptions, vision_usage
 

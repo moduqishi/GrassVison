@@ -189,6 +189,20 @@
                                         <label>缓存提示词（可选）</label>
                                         <input class="input" x-model="form.cache_prompt" placeholder="留空使用全局 prompts/cache.txt">
                                     </div>
+                                    <div class="switch-row" style="margin-top:14px">
+                                        <div>
+                                            <div class="switch-label">思考链引导</div>
+                                            <div class="switch-desc">注入系统提示，让源模型在思考链（推理过程）中引用图片分析结果</div>
+                                        </div>
+                                        <label class="switch"><input type="checkbox" x-model="form.thinking_guidance"><span class="track"></span></label>
+                                    </div>
+                                    <div class="switch-row" style="margin-top:8px">
+                                        <div>
+                                            <div class="switch-label">流式透传视觉思考</div>
+                                            <div class="switch-desc">发图后立即流式显示图像模型的思考/分析过程，再无缝衔接源模型的思考与回答（仅流式请求生效）</div>
+                                        </div>
+                                        <label class="switch"><input type="checkbox" x-model="form.stream_vision_thinking"><span class="track"></span></label>
+                                    </div>
                                 </div>
                             </template>
                             <template x-if="!form.vision_enabled">
@@ -230,7 +244,7 @@ function modelManager() {
         sourceKeys:{{ source_keys | tojson }}, visionKeys:{{ vision_keys | tojson }}, promptFiles:{{ prompt_files | tojson }},
         sourceModels:{}, visionModels:{}, sourceLoading:false, visionLoading:false,
 
-        form:{model_id:'',name:'',source_provider:'',source_model:'',vision_enabled:false,vision_provider:'',vision_model:'',vision_prompt:'prompts/default.txt',cache_prompt:null,vision_failure_mode:'error',replace_response_model:true,enabled:true},
+        form:{model_id:'',name:'',source_provider:'',source_model:'',vision_enabled:false,vision_provider:'',vision_model:'',vision_prompt:'prompts/default.txt',cache_prompt:null,vision_failure_mode:'error',thinking_guidance:false,stream_vision_thinking:false,replace_response_model:true,enabled:true},
 
         get sourceModelCount(){
             const arr=this.sourceModels[this.form.source_provider];
@@ -244,7 +258,7 @@ function modelManager() {
         async init(){ const d=await api('GET','/api/admin/models'); this.models=d.models||{}; },
         openCreate(){
             this.editing=false;
-            this.form={model_id:'',name:'',source_provider:'',source_model:'',vision_enabled:false,vision_provider:'',vision_model:'',vision_prompt:'prompts/default.txt',cache_prompt:null,vision_failure_mode:'error',replace_response_model:true,enabled:true};
+            this.form={model_id:'',name:'',source_provider:'',source_model:'',vision_enabled:false,vision_provider:'',vision_model:'',vision_prompt:'prompts/default.txt',cache_prompt:null,vision_failure_mode:'error',thinking_guidance:false,stream_vision_thinking:false,replace_response_model:true,enabled:true};
             this.showModal=true;
             this.$nextTick(()=>{ if(this.$refs.firstInput) this.$refs.firstInput.focus(); });
         },
