@@ -40,8 +40,6 @@ class EnhancedModelConfig(BaseModel):
     vision_model: str = ""
     vision_prompt: str = "prompts/default.txt"
     vision_failure_mode: Literal["error", "skip"] = "error"
-    thinking_guidance: bool = False  # 注入系统提示，引导源模型在思考链中引用图片分析
-    stream_vision_thinking: bool = False  # 流式透传视觉模型的思考/分析过程，再无缝衔接源模型
     replace_response_model: bool = True
     cache_prompt: str | None = None
 
@@ -82,6 +80,8 @@ class ImageConfig(BaseModel):
     analysis_scope: str = "latest_user_message"
     historical_cache_miss: Literal["analyze", "drop", "error"] = "analyze"
     comparison_strategy: str = "source_model"
+    thinking_guidance: bool = False  # 注入系统提示，引导源模型在思考链中引用图片分析
+    stream_vision_thinking: bool = False  # 流式透传视觉模型的思考/分析过程，再无缝衔接源模型
     vision_cache: VisionCacheConfig = Field(default_factory=VisionCacheConfig)
 
 

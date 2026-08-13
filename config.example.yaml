@@ -45,8 +45,6 @@ models:
     vision_model: ''
     vision_prompt: prompts/default.txt
     vision_failure_mode: error
-    thinking_guidance: false
-    stream_vision_thinking: false
     replace_response_model: true
     cache_prompt: null
   deepseek-v4-pro-vision:
@@ -59,8 +57,6 @@ models:
     vision_model: ''
     vision_prompt: prompts/default.txt
     vision_failure_mode: error
-    thinking_guidance: false
-    stream_vision_thinking: false
     replace_response_model: true
     cache_prompt: null
   glm-5.2-vision:
@@ -73,8 +69,6 @@ models:
     vision_model: ''
     vision_prompt: prompts/default.txt
     vision_failure_mode: error
-    thinking_guidance: false
-    stream_vision_thinking: false
     replace_response_model: true
     cache_prompt: null
 
@@ -89,6 +83,8 @@ image:
   multi_image_mode: independent
   analysis_scope: latest_user_message
   historical_cache_miss: drop
+  thinking_guidance: false
+  stream_vision_thinking: false
   comparison_strategy: source_model
   vision_cache:
     enabled: true

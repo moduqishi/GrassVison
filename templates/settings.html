@@ -171,6 +171,33 @@
         </div>
     </div>
 
+    <!-- 思考链 -->
+    <div class="card">
+        <div class="card-head">
+            <svg class="icon"><use href="#i-zap"/></svg>
+            <div>
+                <div class="card-title">思考链</div>
+                <div class="card-title-sub">图片分析与推理模型的思考链行为（对所有视觉增强模型生效）</div>
+            </div>
+        </div>
+        <div class="card-body">
+            <div class="switch-row">
+                <div>
+                    <div class="switch-label">流式透传视觉思考</div>
+                    <div class="switch-desc">发图后立即流式显示图像模型的思考/分析过程，再无缝衔接源模型的思考与回答（仅流式请求生效，不再静默等待）</div>
+                </div>
+                <label class="switch"><input type="checkbox" x-model="form.image.stream_vision_thinking"><span class="track"></span></label>
+            </div>
+            <div class="switch-row" style="margin-bottom:0">
+                <div>
+                    <div class="switch-label">思考链引导</div>
+                    <div class="switch-desc">注入系统提示，让源模型在思考链（推理过程）中引用图片分析结果</div>
+                </div>
+                <label class="switch"><input type="checkbox" x-model="form.image.thinking_guidance"><span class="track"></span></label>
+            </div>
+        </div>
+    </div>
+
     <!-- 日志 -->
     <div class="card">
         <div class="card-head">

@@ -35,7 +35,7 @@ def _find_model(model_id: str) -> EnhancedModelConfig:
     return model
 
 
-# 思考链引导：当模型开启 thinking_guidance 时注入系统提示，
+# 思考链引导：系统设置 image.thinking_guidance 开启时注入系统提示，
 # 要求源模型在推理过程中引用图片分析结果。
 _THINKING_GUIDANCE_TEXT = (
     "用户消息的 <grassvision_image_context> 标签内附带了从用户上传图片中自动提取的分析信息。\n"
@@ -179,8 +179,8 @@ async def handle_chat_completion(
         return _openai_error_response(400, f"Too many images: {len(all_images)} > {cfg.image.max_images}")
 
     # ── 2.5 流式透传视觉思考：不阻塞等待分析，先流式显示视觉模型的
-    #     思考/分析过程，再无缝衔接源模型（需模型开启 stream_vision_thinking）─
-    if request.stream and model.stream_vision_thinking:
+    #     思考/分析过程，再无缝衔接源模型（系统设置 image.stream_vision_thinking）─
+    if request.stream and cfg.image.stream_vision_thinking:
         return StreamingResponse(
             _combined_stream(
                 request=request,
@@ -258,7 +258,7 @@ async def handle_chat_completion(
             break
 
     # ── 6. 思考链引导：让源模型在推理时引用图片分析 ──────────
-    if model.thinking_guidance:
+    if cfg.image.thinking_guidance:
         enhanced_messages = _inject_thinking_guidance(enhanced_messages)
 
     # ── 7. Assert no image_url blocks remain ────────────────────
@@ -444,7 +444,7 @@ async def _combined_stream(
                 enhanced_messages[i]["content"] = list(content) + [{"type": "text", "text": f"\n{injection}"}]
             break
 
-    if model.thinking_guidance:
+    if cfg.image.thinking_guidance:
         enhanced_messages = _inject_thinking_guidance(enhanced_messages)
     assert_no_image_url_blocks(enhanced_messages)
 
