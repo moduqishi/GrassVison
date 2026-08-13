@@ -138,13 +138,22 @@ async def handle_chat_completion(
     # ── 1. Extract all images with positions ─────────────────────
     all_images = extract_all_images_with_positions(messages_raw)
 
-    if not all_images or not model.vision_enabled:
-        # No images or vision disabled → forward directly
-        body = _build_source_body(request, model, messages_raw)
+    # ── 1.5 只处理当前（最后一条用户消息）里的图片 ──────────────
+    # 历史消息里的图片一律剥离：不分析、不注入、不参与流式思考。
+    # 解决：无关图片污染上下文、模型反复提及旧图、纯文字追问也被拖慢首 token。
+    current_positions = extract_images_from_last_user_message(messages_raw)
+    current_images = [img for img in all_images if img.position in current_positions]
+
+    if not current_images or not model.vision_enabled:
+        # 无当前图片或视觉关闭 → 剥离所有图片块后直接转发
+        stripped = messages_raw
+        if all_images:
+            stripped = inject_image_descriptions(messages_raw, {})
+        body = _build_source_body(request, model, stripped)
         if request.stream:
             def _on_noimg_usage(usage):
                 stats_tracker.record_call(
-                    model=request.model, images=0,
+                    model=request.model, images=len(all_images),
                     stream=True, elapsed=0,
                     vision_used=False, vision_success=False,
                     source_tokens=usage,
@@ -164,19 +173,16 @@ async def handle_chat_completion(
                 stream=False,
             )
             stats_tracker.record_call(
-                model=request.model, images=0,
+                model=request.model, images=len(all_images),
                 stream=request.stream, elapsed=0,
                 vision_used=False, vision_success=False,
                 source_tokens=source_usage,
             )
         return resp
 
-    # ── 2. Determine which images can trigger NEW analysis ───────
-    current_positions = extract_images_from_last_user_message(messages_raw)
-
-    # Validate image count
-    if len(all_images) > cfg.image.max_images:
-        return _openai_error_response(400, f"Too many images: {len(all_images)} > {cfg.image.max_images}")
+    # Validate image count（仅当前图片）
+    if len(current_images) > cfg.image.max_images:
+        return _openai_error_response(400, f"Too many images: {len(current_images)} > {cfg.image.max_images}")
 
     # ── 2.5 流式透传视觉思考：不阻塞等待分析，先流式显示视觉模型的
     #     思考/分析过程，再无缝衔接源模型（系统设置 image.stream_vision_thinking）─
@@ -186,7 +192,7 @@ async def handle_chat_completion(
                 request=request,
                 model=model,
                 messages_raw=messages_raw,
-                all_images=all_images,
+                current_images=current_images,
                 current_positions=current_positions,
                 raw_request=raw_request,
             ),
@@ -194,10 +200,10 @@ async def handle_chat_completion(
             headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
         )
 
-    # ── 3. Resolve all image descriptions (cache + vision calls) ─
+    # ── 3. Resolve 当前图片的描述（缓存 + 视觉调用）────────────
     try:
         descriptions, vision_usage = await resolve_image_descriptions(
-            images=all_images,
+            images=current_images,
             model_config=model,
             allow_analysis_positions=current_positions,
             historical_cache_miss=cfg.image.historical_cache_miss,
@@ -244,18 +250,20 @@ async def handle_chat_completion(
     enhanced_messages = inject_image_descriptions(messages_raw, descriptions)
 
     # ── 5. Merge and inject vision context into last user msg ────
+    # 只注入当前图片的描述（历史图片已剥离，不会进入当前问题）
     merged = _merge_and_number_descriptions(descriptions)
-    injection = _build_injection_text(merged)
+    if merged:
+        injection = _build_injection_text(merged)
 
-    # Append injection to the last user message
-    for i in range(len(enhanced_messages) - 1, -1, -1):
-        if enhanced_messages[i].get("role") == "user":
-            content = enhanced_messages[i].get("content")
-            if isinstance(content, str):
-                enhanced_messages[i]["content"] = f"{content}\n\n{injection}"
-            elif isinstance(content, list):
-                enhanced_messages[i]["content"] = list(content) + [{"type": "text", "text": f"\n{injection}"}]
-            break
+        # Append injection to the last user message
+        for i in range(len(enhanced_messages) - 1, -1, -1):
+            if enhanced_messages[i].get("role") == "user":
+                content = enhanced_messages[i].get("content")
+                if isinstance(content, str):
+                    enhanced_messages[i]["content"] = f"{content}\n\n{injection}"
+                elif isinstance(content, list):
+                    enhanced_messages[i]["content"] = list(content) + [{"type": "text", "text": f"\n{injection}"}]
+                break
 
     # ── 6. 思考链引导：让源模型在推理时引用图片分析 ──────────
     if cfg.image.thinking_guidance:
@@ -364,7 +372,7 @@ async def _combined_stream(
     request: ChatCompletionRequest,
     model: EnhancedModelConfig,
     messages_raw: list[dict],
-    all_images: list,
+    current_images: list,
     current_positions: set,
     raw_request: Request,
 ):
@@ -381,11 +389,17 @@ async def _combined_stream(
     queue: asyncio.Queue = asyncio.Queue()
     is_first = {"value": True}
 
+    # 立即推一条预提示，消除图片下载/视觉模型首字前的静默等待
+    prelude, is_first["value"] = _build_vision_frame(
+        "【正在分析用户发送的图片…】", public_model_id, stream_id, True
+    )
+    yield prelude
+
     # ── 阶段 1：流式视觉分析 ───────────────────────────────────
     async def _resolve():
         try:
             return await resolve_image_descriptions(
-                images=all_images,
+                images=current_images,
                 model_config=model,
                 allow_analysis_positions=current_positions,
                 historical_cache_miss=cfg.image.historical_cache_miss,
@@ -421,7 +435,7 @@ async def _combined_stream(
         body = _build_source_body(request, model, messages_raw)
         def _on_skip_usage(usage):
             stats_tracker.record_call(
-                model=request.model, images=len(all_images),
+                model=request.model, images=len(current_images),
                 stream=True, elapsed=0,
                 vision_used=True, vision_success=False,
                 vision_tokens=None, source_tokens=usage,
@@ -433,16 +447,17 @@ async def _combined_stream(
     # ── 阶段 2：注入描述并衔接源模型流 ────────────────────────
     enhanced_messages = inject_image_descriptions(messages_raw, descriptions)
     merged = _merge_and_number_descriptions(descriptions)
-    injection = _build_injection_text(merged)
+    if merged:
+        injection = _build_injection_text(merged)
 
-    for i in range(len(enhanced_messages) - 1, -1, -1):
-        if enhanced_messages[i].get("role") == "user":
-            content = enhanced_messages[i].get("content")
-            if isinstance(content, str):
-                enhanced_messages[i]["content"] = f"{content}\n\n{injection}"
-            elif isinstance(content, list):
-                enhanced_messages[i]["content"] = list(content) + [{"type": "text", "text": f"\n{injection}"}]
-            break
+        for i in range(len(enhanced_messages) - 1, -1, -1):
+            if enhanced_messages[i].get("role") == "user":
+                content = enhanced_messages[i].get("content")
+                if isinstance(content, str):
+                    enhanced_messages[i]["content"] = f"{content}\n\n{injection}"
+                elif isinstance(content, list):
+                    enhanced_messages[i]["content"] = list(content) + [{"type": "text", "text": f"\n{injection}"}]
+                break
 
     if cfg.image.thinking_guidance:
         enhanced_messages = _inject_thinking_guidance(enhanced_messages)
@@ -452,7 +467,7 @@ async def _combined_stream(
 
     def _on_source_usage(usage):
         stats_tracker.record_call(
-            model=request.model, images=len(all_images),
+            model=request.model, images=len(current_images),
             stream=True, elapsed=0,
             vision_used=bool(vision_usage), vision_success=True,
             vision_tokens=vision_usage if vision_usage else None,

@@ -397,7 +397,8 @@ async def resolve_image_descriptions(
                         expires_at=0,
                     ))
             elif is_historical and historical_cache_miss == "drop":
-                url_results[url] = "[历史图片分析结果不可用]"
+                # 静默丢弃：不注入占位文本，注入阶段会直接移除该图片块
+                url_results[url] = ""
                 url_to_status[url] = "dropped"
                 await cache.set(cache_key, CacheEntry(
                     result="",

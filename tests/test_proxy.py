@@ -104,3 +104,98 @@ class TestVisionFrame:
         data = json.loads(frame[6:].strip())
         assert "role" not in data["choices"][0]["delta"]
         assert data["choices"][0]["delta"]["reasoning_content"] == "继续"
+
+
+TINY_PNG = ("data:image/png;base64,"
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
+            "AAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+
+
+class _FakeResp:
+    def __init__(self, status_code, data):
+        self.status_code = status_code
+        self._data = data
+
+    def json(self):
+        return self._data
+
+
+class _FakeSourceClient:
+    def __init__(self):
+        self.body = None
+
+    async def post(self, url, json=None):
+        self.body = json
+        return _FakeResp(200, {"choices": [{"message": {"content": "ok"}}], "usage": {}})
+
+    async def aclose(self):
+        pass
+
+
+class _FakeVisionClient:
+    def __init__(self):
+        self.post_calls = []
+
+    async def post(self, url, json=None):
+        self.post_calls.append(json)
+        return _FakeResp(200, {"choices": [{"message": {"content": "## 图片 1\n测试描述"}}],
+                               "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}})
+
+    async def aclose(self):
+        pass
+
+
+class _RawReq:
+    pass
+
+
+class TestCurrentImageOnly:
+    """只处理当前（最后一条用户消息）图片：历史图片剥离、不调视觉、不注入上下文。"""
+
+    def test_historical_image_stripped_without_vision(self):
+        from app.proxy import handle_chat_completion
+        request = ChatCompletionRequest(
+            model="openai-vision",
+            messages=[
+                ChatMessage(role="user", content=[
+                    {"type": "image_url", "image_url": {"url": TINY_PNG}},
+                    {"type": "text", "text": "这张图是什么?"},
+                ]),
+                ChatMessage(role="assistant", content="这是一张测试图。"),
+                ChatMessage(role="user", content="继续解释一下"),
+            ],
+            stream=False,
+        )
+        vision = _FakeVisionClient()
+        source = _FakeSourceClient()
+        with patch("app.vision.get_vision_client", return_value=vision), \
+             patch("app.proxy.get_source_client", return_value=source):
+            import asyncio
+            asyncio.run(handle_chat_completion(request, _RawReq()))
+        assert vision.post_calls == []
+        joined = json.dumps(source.body["messages"], ensure_ascii=False)
+        assert "image_url" not in joined
+        assert "grassvision_image_context" not in joined
+        assert "测试描述" not in joined
+
+    def test_current_image_analyzed_and_injected(self):
+        from app.proxy import handle_chat_completion
+        request = ChatCompletionRequest(
+            model="openai-vision",
+            messages=[ChatMessage(role="user", content=[
+                {"type": "image_url", "image_url": {"url": TINY_PNG}},
+                {"type": "text", "text": "这张图是什么?"},
+            ])],
+            stream=False,
+        )
+        vision = _FakeVisionClient()
+        source = _FakeSourceClient()
+        with patch("app.vision.get_vision_client", return_value=vision), \
+             patch("app.proxy.get_source_client", return_value=source):
+            import asyncio
+            asyncio.run(handle_chat_completion(request, _RawReq()))
+        assert len(vision.post_calls) == 1
+        joined = json.dumps(source.body["messages"], ensure_ascii=False)
+        assert "image_url" not in joined
+        assert "测试描述" in joined
+        assert "grassvision_image_context" in joined
