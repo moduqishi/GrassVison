@@ -612,12 +612,12 @@ pre.code-block {
 
 .log-box {
   max-height: 560px; overflow: auto;
-  font-family: var(--font-mono); font-size: 12px; line-height: 1.75;
+  font-family: var(--font-mono); font-size: 11.5px; line-height: 1.5;
   background: #0f172a; color: #cbd5e1;
-  padding: 14px 16px;
+  padding: 10px 12px;
   border-radius: 0 0 var(--radius) var(--radius);
 }
-.log-line { white-space: pre; padding: 1px 0; border-radius: 4px; }
+.log-line { white-space: nowrap; padding: 0; }
 .log-line:hover { background: rgba(148, 163, 184, 0.08); }
 .log-line .ts { color: #64748b; }
 .log-ERROR, .log-CRITICAL { color: #f87171; }
