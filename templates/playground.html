@@ -1,55 +1,239 @@
 {% extends "base.html" %}
 {% block title %}在线测试{% endblock %}
 {% block content %}
-<h1>🧪 在线测试</h1>
-<div x-data="playground()">
-    <div class="form-group"><label>增强模型</label><select class="input" x-model="model"><option value="">-- 选择 --</option><template x-for="m in modelList"><option :value="m" x-text="m"></option></template></select></div>
-    <div class="form-group"><label>用户问题</label><textarea class="input" x-model="question" rows="3" placeholder="请输入你的问题..."></textarea></div>
-    <div class="form-group"><label>上传图片（可多选）</label><input type="file" multiple accept="image/*" @change="onFilesChange"></div>
-    <div class="form-group"><label><input type="checkbox" x-model="stream"> 流式输出</label></div>
-    <div class="form-actions">
-        <button class="btn btn-primary" @click="sendTest()" :disabled="sending">发送测试</button>
+<div x-data="playground()" x-init="init()">
+    <div class="page-head">
+        <div>
+            <h1>在线测试</h1>
+            <div class="sub">直接体验增强模型的完整链路：图片 → 视觉分析 → 文本推理。</div>
+        </div>
     </div>
-    <div x-show="debugInfo" class="card" style="margin-top:16px">
-        <h3>调试信息</h3>
-        <table class="info-table">
-            <tr><td>检测到图片</td><td x-text="debugInfo.hasImages"></td></tr>
-            <tr><td>源渠道</td><td x-text="debugInfo.sourceProvider"></td></tr>
-            <tr><td>源模型</td><td x-text="debugInfo.sourceModel"></td></tr>
-            <tr><td>视觉渠道</td><td x-text="debugInfo.visionProvider"></td></tr>
-            <tr><td>视觉模型</td><td x-text="debugInfo.visionModel"></td></tr>
-            <tr><td>总耗时</td><td x-text="debugInfo.elapsed + 's'"></td></tr>
-        </table>
-    </div>
-    <div x-show="response" class="card" style="margin-top:16px">
-        <h3>回答</h3>
-        <pre class="response-box" x-text="response"></pre>
+
+    <div class="pg-layout">
+        <!-- Config panel -->
+        <div>
+            <div class="card" style="position:sticky;top:80px">
+                <div class="card-head">
+                    <svg class="icon"><use href="#i-sliders"/></svg>
+                    <div>
+                        <div class="card-title">测试配置</div>
+                        <div class="card-title-sub">选择模型与输出方式</div>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="form-group">
+                        <label class="label-req">增强模型</label>
+                        <select class="input" x-model="model">
+                            <option value="">-- 选择模型 --</option>
+                            <template x-for="m in modelList" :key="m"><option :value="m" x-text="m"></option></template>
+                        </select>
+                        <p class="hint" x-show="!modelList.length" style="color:var(--warning-text)">暂无模型，请先到「增强模型」页面创建。</p>
+                    </div>
+
+                    <div class="switch-row" style="padding:8px 0">
+                        <div>
+                            <div class="switch-label">流式输出</div>
+                            <div class="switch-desc">边生成边显示</div>
+                        </div>
+                        <label class="switch"><input type="checkbox" x-model="stream"><span class="track"></span></label>
+                    </div>
+
+                    <div class="form-group" style="margin-bottom:0">
+                        <label>图片数量</label>
+                        <div class="flex-center" style="gap:8px">
+                            <span class="badge" :class="files.length ? 'badge-info' : 'badge-muted'" x-text="files.length + ' 张'"></span>
+                            <span class="hint" style="margin:0">最多 5 张</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Debug -->
+            <div class="debug-panel" x-show="debug" x-cloak>
+                <button class="debug-head" :class="{open:debugOpen}" @click="debugOpen=!debugOpen">
+                    <svg class="icon icon-sm"><use href="#i-chevron"/></svg>
+                    调试信息
+                </button>
+                <div class="debug-body" x-show="debugOpen" x-cloak>
+                    <div class="debug-grid">
+                        <div class="debug-item"><span class="k">模型</span><span class="v" x-text="debug.model"></span></div>
+                        <div class="debug-item"><span class="k">图片</span><span class="v" x-text="debug.images"></span></div>
+                        <div class="debug-item"><span class="k">流式</span><span class="v" x-text="debug.stream ? '是' : '否'"></span></div>
+                        <div class="debug-item"><span class="k">耗时</span><span class="v" x-text="debug.elapsed + 's'"></span></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Chat panel -->
+        <div class="card chat-card">
+            <div class="card-head">
+                <svg class="icon"><use href="#i-flask"/></svg>
+                <div>
+                    <div class="card-title">对话</div>
+                    <div class="card-title-sub" x-text="messages.length ? messages.length + ' 条消息' : '输入问题并发送图片开始测试'"></div>
+                </div>
+                <button class="btn btn-ghost btn-sm" x-show="messages.length" @click="clearChat()" style="margin-left:auto">
+                    <svg class="icon"><use href="#i-trash"/></svg>清空
+                </button>
+            </div>
+
+            <div class="chat-body" x-ref="chatBody">
+                <template x-for="(msg, i) in messages" :key="i">
+                    <div class="chat-msg" :class="msg.role">
+                        <div class="avatar" x-text="msg.role==='user' ? '我' : 'AI'"></div>
+                        <div style="max-width:100%">
+                            <template x-if="msg.images && msg.images.length">
+                                <div class="chat-img-chips" style="margin-bottom:6px">
+                                    <template x-for="(img, j) in msg.images" :key="j">
+                                        <div class="chip-img"><img :src="img.url" :alt="img.name"></div>
+                                    </template>
+                                </div>
+                            </template>
+                            <div class="chat-bubble" :class="{'cursor': msg.streaming}">
+                                <span x-show="msg.text" x-text="msg.text"></span>
+                                <span x-show="!msg.text && !msg.streaming" class="text-muted" style="font-style:italic">（空响应）</span>
+                                <span x-show="!msg.text && msg.streaming">正在思考…</span>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+                <div x-show="!messages.length" class="empty" style="padding:60px 20px">
+                    <div class="empty-icon"><svg class="icon"><use href="#i-image"/></svg></div>
+                    <div class="empty-title">开始一次测试</div>
+                    <div class="empty-desc">选择模型，输入问题、上传图片（可选），然后发送。请求会走完整的增强链路。</div>
+                </div>
+            </div>
+
+            <div class="chat-input-wrap">
+                <div class="chat-img-chips" x-show="files.length" style="margin-bottom:10px">
+                    <template x-for="(f, i) in files" :key="i">
+                        <div class="chip-img">
+                            <img :src="filePreviews[i]" :alt="f.name">
+                            <button @click="removeFile(i)" title="移除">×</button>
+                        </div>
+                    </template>
+                </div>
+                <div class="chat-input">
+                    <textarea class="input" x-model="question" rows="2" placeholder="输入问题，例如：请描述这张图片的内容…" @keydown.enter.exact.prevent="sendTest()" :disabled="sending"></textarea>
+                    <label class="btn btn-outline upload-btn" style="flex:none" title="上传图片（最多 5 张）">
+                        <svg class="icon"><use href="#i-image"/></svg>
+                        <input type="file" multiple accept="image/*" @change="onFilesChange" :disabled="sending">
+                    </label>
+                    <button class="btn btn-primary" style="flex:none" @click="sendTest()" :disabled="sending || !model">
+                        <span class="spinner" x-show="sending" style="border-color:rgba(255,255,255,.35);border-top-color:#fff"></span>
+                        <svg class="icon" x-show="!sending"><use href="#i-send"/></svg>
+                        <span x-text="sending ? '发送中' : '发送'"></span>
+                    </button>
+                </div>
+                <p class="hint" style="margin-top:8px;margin-bottom:0">
+                    <template x-if="!model"><span style="color:var(--warning-text)">⚠ 请先选择模型</span></template>
+                    <template x-if="model">按 <code class="inline">Enter</code> 发送 · <code class="inline">Shift+Enter</code> 换行</template>
+                </p>
+            </div>
+        </div>
     </div>
 </div>
+
 <script>
 function playground() {
     return {
-        modelList:{{ models | tojson }}, model:'', question:'', files:[], stream:false, sending:false, response:'', debugInfo:null,
-        onFilesChange(e){ this.files=Array.from(e.target.files); },
+        modelList: {{ models | tojson }}, model:'', question:'', files:[], filePreviews:[],
+        stream:true, sending:false, messages:[], debug:null, debugOpen:false,
+        init(){},
+        onFilesChange(e){
+            const list=Array.from(e.target.files||[]);
+            e.target.value='';
+            if(this.files.length+list.length>5){ showToast('最多上传 5 张图片','error'); return; }
+            for(const f of list){ this.files.push(f); this.filePreviews.push(URL.createObjectURL(f)); }
+        },
+        removeFile(i){
+            URL.revokeObjectURL(this.filePreviews[i]);
+            this.files.splice(i,1); this.filePreviews.splice(i,1);
+        },
+        fileToB64(f){
+            return new Promise((resolve,reject)=>{
+                const re=new FileReader();
+                re.onload=e=>resolve(e.target.result.split(',')[1]);
+                re.onerror=reject;
+                re.readAsDataURL(f);
+            });
+        },
+        clearChat(){ this.messages=[]; this.debug=null; },
         async sendTest(){
-            if(!this.model) return showToast('请选择模型','error');
-            this.sending=true; this.response=''; this.debugInfo=null;
-            const messages=[{role:'user',content:[]}];
-            if(this.question) messages[0].content.push({type:'text',text:this.question});
+            if(this.sending) return;
+            if(!this.model){ showToast('请先选择增强模型','error'); return; }
+            if(!this.question.trim() && !this.files.length){ showToast('请输入问题或上传图片','error'); return; }
+            this.sending=true;
+
+            const content=[];
+            if(this.question.trim()) content.push({type:'text',text:this.question.trim()});
             for(const f of this.files){
-                const b64=await new Promise(r=>{const re=new FileReader();re.onload=e=>r(e.target.result.split(',')[1]);re.readAsDataURL(f);});
-                messages[0].content.push({type:'image_url',image_url:{url:`data:image/png;base64,${b64}`}});
+                const b64=await this.fileToB64(f);
+                const mime=f.type||'image/png';
+                content.push({type:'image_url',image_url:{url:`data:${mime};base64,${b64}`}});
             }
+            this.messages.push({role:'user', text:this.question.trim()||'(图片)', images:this.files.map((f,i)=>({name:f.name,url:this.filePreviews[i]}))});
+            this.messages.push({role:'assistant', text:'', streaming:true});
+            this.scrollToBottom();
+
             const start=Date.now();
-            try{ const r=await fetch('/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:this.model,messages,stream:this.stream})});
+            const body={model:this.model, messages:[{role:'user',content}], stream:this.stream};
+            try{
+                const r=await fetch('/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+                if(!r.ok){
+                    const d=await r.json().catch(()=>({}));
+                    const msg=(d.error&&(d.error.message||d.error))||r.statusText;
+                    throw new Error(typeof msg==='string'?msg:JSON.stringify(msg));
+                }
+                let text='';
                 if(this.stream){
-                    this.response='';
-                    const reader=r.body.getReader(); const dec=new TextDecoder();
-                    while(true){ const {done,value}=await reader.read(); if(done) break; this.response+=dec.decode(value,{stream:true}); }
-                }else{ const d=await r.json(); this.response=d.choices?.[0]?.message?.content||JSON.stringify(d); }
-                this.debugInfo={hasImages:this.files.length>0,sourceProvider:'?',sourceModel:'?',visionProvider:'?',visionModel:'?',elapsed:((Date.now()-start)/1000).toFixed(2)};
-            }catch(e){ this.response='错误: '+e.message; }
+                    const reader=r.body.getReader();
+                    const dec=new TextDecoder();
+                    while(true){
+                        const {done,value}=await reader.read();
+                        if(done) break;
+                        text=this.appendSSE(dec.decode(value,{stream:true}), text);
+                    }
+                }else{
+                    const d=await r.json();
+                    text=d.choices?.[0]?.message?.content||'';
+                    if(!text) text='（无内容）' + (d.error?(' '+JSON.stringify(d.error)):'');
+                    this.updateAssistant(text);
+                }
+                const last=this.messages[this.messages.length-1];
+                if(last){ last.text=text; last.streaming=false; }
+                this.debug={model:this.model, images:this.files.length, stream:this.stream, elapsed:((Date.now()-start)/1000).toFixed(2)};
+            }catch(e){
+                const last=this.messages[this.messages.length-1];
+                if(last){ last.text='❌ '+e.message; last.error=true; last.streaming=false; }
+            }
             this.sending=false;
+            this.question='';
+            for(const u of this.filePreviews) URL.revokeObjectURL(u);
+            this.files=[]; this.filePreviews=[];
+            this.scrollToBottom();
+        },
+        appendSSE(chunk, acc){
+            const lines=chunk.split('\n');
+            for(const line of lines){
+                if(!line.startsWith('data:')) continue;
+                const payload=line.slice(5).trim();
+                if(!payload || payload==='[DONE]') continue;
+                try{
+                    const j=JSON.parse(payload);
+                    const delta=j.choices?.[0]?.delta?.content;
+                    if(delta){ acc+=delta; this.updateAssistant(acc); }
+                }catch(_){/* partial line, ignore */}
+            }
+            return acc;
+        },
+        updateAssistant(text){
+            const last=this.messages[this.messages.length-1];
+            if(last && last.streaming){ last.text=text; this.scrollToBottom(); }
+        },
+        scrollToBottom(){
+            this.$nextTick(()=>{ const el=this.$refs.chatBody; if(el) el.scrollTop=el.scrollHeight; });
         }
     }
 }

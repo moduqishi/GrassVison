@@ -1,31 +1,104 @@
 {% extends "base.html" %}
-{% block title %}首页 - GrassVision{% endblock %}
+{% block title %}管理首页 - GrassVision{% endblock %}
 {% block content %}
-<h1>📊 管理首页</h1>
+<div class="page-head">
+    <div>
+        <h1>👋 欢迎回来</h1>
+        <div class="sub">GrassVision 服务当前运行正常，以下是整体概览。</div>
+    </div>
+    <div class="page-head-actions">
+        <a href="/admin/playground" class="btn btn-outline">
+            <svg class="icon"><use href="#i-flask"/></svg>在线测试
+        </a>
+        <button onclick="reloadConfig()" class="btn btn-outline">
+            <svg class="icon"><use href="#i-refresh"/></svg>重新加载配置
+        </button>
+    </div>
+</div>
 
 <div class="stats-grid">
-    <div class="stat-card"><div class="stat-value">{{ source_count }}</div><div class="stat-label">源渠道</div></div>
-    <div class="stat-card"><div class="stat-value">{{ vision_count }}</div><div class="stat-label">视觉渠道</div></div>
-    <div class="stat-card"><div class="stat-value">{{ model_count }}</div><div class="stat-label">增强模型</div></div>
-    <div class="stat-card"><div class="stat-value">{{ enabled_model_count }}</div><div class="stat-label">已启用模型</div></div>
+    <div class="stat-card">
+        <div class="stat-icon accent-blue"><svg class="icon"><use href="#i-link"/></svg></div>
+        <div class="stat-meta">
+            <div class="stat-value">{{ source_count }}</div>
+            <div class="stat-label">源渠道（文本模型）</div>
+        </div>
+        <div class="stat-accent"></div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon accent-violet"><svg class="icon"><use href="#i-eye"/></svg></div>
+        <div class="stat-meta">
+            <div class="stat-value">{{ vision_count }}</div>
+            <div class="stat-label">视觉渠道（视觉模型）</div>
+        </div>
+        <div class="stat-accent"></div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon accent-green"><svg class="icon"><use href="#i-puzzle"/></svg></div>
+        <div class="stat-meta">
+            <div class="stat-value">{{ model_count }}</div>
+            <div class="stat-label">增强模型（总数）</div>
+        </div>
+        <div class="stat-accent"></div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon accent-amber"><svg class="icon"><use href="#i-zap"/></svg></div>
+        <div class="stat-meta">
+            <div class="stat-value">{{ enabled_model_count }}</div>
+            <div class="stat-label">已启用模型</div>
+        </div>
+        <div class="stat-accent"></div>
+    </div>
 </div>
 
 <div class="card">
-    <h3>服务状态</h3>
-    <table class="info-table">
-        <tr><td>状态</td><td><span class="badge badge-success">运行中</span></td></tr>
-        <tr><td>监听地址</td><td>{{ config.server.host }}:{{ config.server.port }}</td></tr>
-        <tr><td>配置路径</td><td><code>{{ meta.path }}</code></td></tr>
-        <tr><td>配置加载时间</td><td>{{ meta.loaded_at or '未加载' }}</td></tr>
-        <tr><td>配置错误</td><td>{{ meta.error or '无' }}</td></tr>
-    </table>
+    <div class="card-head">
+        <svg class="icon"><use href="#i-server"/></svg>
+        <div>
+            <div class="card-title">服务状态</div>
+            <div class="card-title-sub">当前进程运行信息</div>
+        </div>
+        <span class="badge badge-success" style="margin-left:auto"><span class="dot"></span>运行中</span>
+    </div>
+    <div class="card-body">
+        <div class="info-list">
+            <div class="info-item"><span class="k">监听地址</span><span class="v mono">{{ config.server.host }}:{{ config.server.port }}</span></div>
+            <div class="info-item"><span class="k">请求超时</span><span class="v">{{ config.server.request_timeout }}s</span></div>
+            <div class="info-item"><span class="k">配置路径</span><span class="v"><code class="inline">{{ meta.path }}</code></span></div>
+            <div class="info-item"><span class="k">配置加载时间</span><span class="v">{{ meta.loaded_at or '未加载' }}</span></div>
+            {% if meta.error %}
+            <div class="info-item"><span class="k">配置错误</span><span class="v text-danger">{{ meta.error }}</span></div>
+            {% endif %}
+        </div>
+    </div>
 </div>
 
-<div class="quick-actions">
-    <a href="/admin/source-providers" class="btn btn-primary">新增源渠道</a>
-    <a href="/admin/vision-providers" class="btn btn-primary">新增视觉渠道</a>
-    <a href="/admin/models" class="btn btn-primary">新增增强模型</a>
-    <button onclick="api('POST','/api/admin/reload').then(()=>location.reload())" class="btn btn-outline">重新加载配置</button>
-    <a href="/admin/playground" class="btn btn-outline">在线测试</a>
+<div class="card">
+    <div class="card-head">
+        <svg class="icon"><use href="#i-zap"/></svg>
+        <div>
+            <div class="card-title">快捷操作</div>
+            <div class="card-title-sub">常用管理入口</div>
+        </div>
+    </div>
+    <div class="card-body">
+        <div class="quick-actions" style="display:flex;gap:10px;flex-wrap:wrap">
+            <a href="/admin/source-providers" class="btn btn-soft">
+                <svg class="icon"><use href="#i-plus"/></svg>新增源渠道
+            </a>
+            <a href="/admin/vision-providers" class="btn btn-soft">
+                <svg class="icon"><use href="#i-plus"/></svg>新增视觉渠道
+            </a>
+            <a href="/admin/models" class="btn btn-soft">
+                <svg class="icon"><use href="#i-plus"/></svg>新增增强模型
+            </a>
+            <a href="/admin/prompts" class="btn btn-outline">
+                <svg class="icon"><use href="#i-pen"/></svg>编辑提示词
+            </a>
+            <a href="/admin/stats" class="btn btn-outline">
+                <svg class="icon"><use href="#i-chart"/></svg>查看统计
+            </a>
+        </div>
+    </div>
 </div>
 {% endblock %}

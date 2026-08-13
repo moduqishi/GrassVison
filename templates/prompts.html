@@ -1,52 +1,176 @@
 {% extends "base.html" %}
-{% block title %}提示词管理{% endblock %}
+{% block title %}视觉提示词管理{% endblock %}
 {% block content %}
-<h1>📝 视觉提示词管理</h1>
-<div x-data="promptManager()">
-    <button class="btn btn-primary" @click="openCreate()">+ 新建提示词</button>
-    <div class="prompt-list">
-        <template x-for="name in prompts" :key="name">
-            <div class="prompt-item" @click="loadPrompt(name)" :class="{active:currentPrompt===name}">
-                <span x-text="name"></span>
-                <button class="btn btn-sm btn-danger" @click.stop="deletePrompt(name)" x-show="name!=='default.txt'">删除</button>
+<div x-data="promptManager()" x-init="init()">
+    <div class="page-head">
+        <div>
+            <h1>视觉提示词管理</h1>
+            <div class="sub">配置视觉模型分析图片时使用的系统指令。</div>
+        </div>
+        <div class="page-head-actions">
+            <button class="btn btn-primary" @click="openCreate()">
+                <svg class="icon"><use href="#i-plus"/></svg>新建提示词
+            </button>
+        </div>
+    </div>
+
+    <div class="pane-layout">
+        <!-- File list -->
+        <div class="pane-side">
+            <div class="card">
+                <div class="card-head">
+                    <svg class="icon"><use href="#i-pen"/></svg>
+                    <div>
+                        <div class="card-title">提示词文件</div>
+                        <div class="card-title-sub" x-text="filteredPrompts.length + ' 个'"></div>
+                    </div>
+                </div>
+                <div style="padding:12px 12px 4px">
+                    <div style="position:relative">
+                        <svg class="icon" style="position:absolute;left:11px;top:9px;color:var(--text-4)"><use href="#i-search"/></svg>
+                        <input class="input" style="padding-left:34px" x-model="filter" placeholder="搜索文件…">
+                    </div>
+                </div>
+                <div class="prompt-list">
+                    <template x-for="name in filteredPrompts" :key="name">
+                        <div class="prompt-item" @click="loadPrompt(name)" :class="{active:currentPrompt===name}">
+                            <svg class="icon icon-sm"><use href="#i-file"/></svg>
+                            <span class="cell-truncate" style="max-width:140px" x-text="name"></span>
+                            <span class="badge badge-warning text-xs" x-show="isDefault(name)" style="padding:1px 6px;font-size:10px">默认</span>
+                            <button class="btn btn-sm btn-danger-ghost prompt-del" style="padding:3px 6px" @click.stop="deletePrompt(name)" x-show="name!=='default.txt'" title="删除">
+                                <svg class="icon icon-sm"><use href="#i-trash"/></svg>
+                            </button>
+                        </div>
+                    </template>
+                    <div x-show="filteredPrompts.length === 0" class="hint" style="text-align:center;padding:18px 0;color:var(--text-4)">没有匹配的提示词</div>
+                </div>
             </div>
-        </template>
-    </div>
-    <div x-show="currentPrompt" class="card" style="margin-top:16px">
-        <div style="display:flex;justify-content:space-between;align-items:center">
-            <h3 x-text="'编辑: ' + currentPrompt"></h3>
-            <button class="btn btn-sm btn-outline" @click="restoreDefault()" x-show="['default.txt','ocr.txt','code.txt','ui.txt','chart.txt'].includes(currentPrompt)">恢复默认</button>
         </div>
-        <textarea class="input" x-model="promptContent" rows="20" style="font-family:monospace;width:100%"></textarea>
-        <div class="form-actions" style="margin-top:8px">
-            <button class="btn btn-primary" @click="savePrompt()">保存</button>
-            <button class="btn btn-ghost" @click="currentPrompt=null">取消</button>
+
+        <!-- Editor -->
+        <div>
+            <div class="card" x-show="currentPrompt" x-cloak>
+                <div class="card-head">
+                    <svg class="icon"><use href="#i-pen"/></svg>
+                    <div style="min-width:0">
+                        <div class="card-title mono" x-text="currentPrompt" style="font-size:13.5px"></div>
+                        <div class="card-title-sub" x-text="promptContent.length + ' 字符'"></div>
+                    </div>
+                    <button class="btn btn-outline btn-sm" @click="restoreDefault()" x-show="isDefault(currentPrompt)" style="margin-left:auto">
+                        <svg class="icon"><use href="#i-refresh"/></svg>恢复默认
+                    </button>
+                </div>
+                <div style="padding:16px 20px">
+                    <textarea class="input" x-model="promptContent" rows="22" style="font-family:var(--font-mono);font-size:13px;line-height:1.7;background:var(--bg-subtle)"></textarea>
+                </div>
+                <div class="card-foot">
+                    <span x-show="savedAt" class="text-xs text-muted" style="margin-right:auto">上次保存：<span x-text="savedAt"></span></span>
+                    <button class="btn btn-ghost" @click="currentPrompt=null;filter=''">取消</button>
+                    <button class="btn btn-primary" @click="savePrompt()">
+                        <svg class="icon"><use href="#i-check"/></svg>保存提示词
+                    </button>
+                </div>
+            </div>
+            <div class="card" x-show="!currentPrompt">
+                <div class="empty" style="padding:70px 20px">
+                    <div class="empty-icon"><svg class="icon"><use href="#i-pen"/></svg></div>
+                    <div class="empty-title">选择一个提示词开始编辑</div>
+                    <div class="empty-desc">左侧列出所有提示词文件；「默认」标识的为内置文件，其余为自定义。</div>
+                </div>
+            </div>
         </div>
     </div>
-    <div class="modal-overlay" x-show="showCreate" @click.self="showCreate=false">
+
+    <!-- Create modal -->
+    <div class="modal-overlay" x-show="showCreate" x-cloak @click.self="showCreate=false">
         <div class="modal">
-            <h3>新建提示词</h3>
+            <div class="modal-head">
+                <div class="modal-icon"><svg class="icon"><use href="#i-plus"/></svg></div>
+                <div>
+                    <div class="modal-title">新建提示词</div>
+                    <div class="modal-sub">文件名需以 .txt 结尾</div>
+                </div>
+                <button class="modal-close" @click="showCreate=false"><svg class="icon"><use href="#i-x"/></svg></button>
+            </div>
             <form @submit.prevent="createPrompt()">
-                <div class="form-group"><label>文件名 (.txt)</label><input class="input" x-model="newName" placeholder="my-prompt.txt"></div>
-                <div class="form-actions"><button type="submit" class="btn btn-primary">创建</button><button type="button" class="btn btn-ghost" @click="showCreate=false">取消</button></div>
+                <div class="modal-body">
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="label-req">文件名</label>
+                        <input class="input" x-model="newName" placeholder="my-prompt.txt" x-ref="newNameInput" required>
+                    </div>
+                </div>
+                <div class="modal-foot">
+                    <button type="button" class="btn btn-ghost" @click="showCreate=false">取消</button>
+                    <button type="submit" class="btn btn-primary">
+                        <svg class="icon"><use href="#i-check"/></svg>创建
+                    </button>
+                </div>
             </form>
         </div>
     </div>
 </div>
+
 <script>
 function promptManager() {
     return {
-        prompts:[], currentPrompt:null, promptContent:'', showCreate:false, newName:'',
+        prompts:[], filtered:[], currentPrompt:null, promptContent:'', showCreate:false, newName:'', filter:'', savedAt:'',
+        get filteredPrompts(){
+            if(!this.filter.trim()) return this.prompts;
+            const q=this.filter.toLowerCase();
+            return this.prompts.filter(n=>n.toLowerCase().includes(q));
+        },
+        isDefault(name){ return ['default.txt','ocr.txt','code.txt','ui.txt','chart.txt'].includes(name); },
         async init(){ const d=await api('GET','/api/admin/prompts'); this.prompts=d.prompts||[]; },
-        async loadPrompt(name){ this.currentPrompt=name; const d=await api('GET',`/api/admin/prompts/${name}`); this.promptContent=d.content; },
-        async savePrompt(){ await api('PUT',`/api/admin/prompts/${this.currentPrompt}`,{content:this.promptContent}); showToast('已保存'); },
-        openCreate(){ this.newName=''; this.showCreate=true; },
-        async createPrompt(){ await api('POST','/api/admin/prompts',{filename:this.newName,content:''}); this.showCreate=false; showToast('已创建'); location.reload(); },
-        async deletePrompt(name){ if(!confirm(`删除"${name}"？`))return; await api('DELETE',`/api/admin/prompts/${name}`); showToast('已删除'); location.reload(); },
-        async restoreDefault(){ if(!confirm('恢复默认提示词将覆盖当前内容，确定？'))return; const defaults={
-            'default.txt':'你是一个高级视觉分析助手...','ocr.txt':'你是一个专业OCR文字提取专家...',
-            'code.txt':'你是一个代码分析和错误诊断专家...','ui.txt':'你是一个UI/UX设计分析专家...','chart.txt':'你是一个数据可视化分析专家...'};
-            await api('PUT',`/api/admin/prompts/${this.currentPrompt}`,{content:defaults[this.currentPrompt]||''}); showToast('已恢复默认'); location.reload();
+        async loadPrompt(name){
+            this.currentPrompt=name;
+            const d=await api('GET',`/api/admin/prompts/${name}`);
+            this.promptContent=d.content;
+            this.savedAt='';
+        },
+        async savePrompt(){
+            if(!this.currentPrompt) return;
+            try {
+                await api('PUT',`/api/admin/prompts/${this.currentPrompt}`,{content:this.promptContent});
+                this.savedAt=new Date().toLocaleTimeString('zh-CN',{hour12:false});
+                showToast('提示词已保存');
+            } catch(e) { showToast(e.message||'保存失败','error'); }
+        },
+        openCreate(){ this.newName=''; this.showCreate=true; this.$nextTick(()=>{ if(this.$refs.newNameInput) this.$refs.newNameInput.focus(); }); },
+        async createPrompt(){
+            let name=this.newName.trim();
+            if(!name) return showToast('请输入文件名','error');
+            if(!name.endsWith('.txt')) name+='.txt';
+            try {
+                await api('POST','/api/admin/prompts',{filename:name,content:''});
+                this.showCreate=false;
+                showToast('已创建');
+                const d=await api('GET','/api/admin/prompts'); this.prompts=d.prompts||[];
+                this.currentPrompt=name; this.promptContent='';
+            } catch(e) { showToast(e.message||'创建失败','error'); }
+        },
+        async deletePrompt(name){
+            if(!(await gvConfirm(`确定删除提示词「${name}」？`))) return;
+            try {
+                await api('DELETE',`/api/admin/prompts/${name}`);
+                showToast('已删除');
+                if(this.currentPrompt===name){ this.currentPrompt=null; this.promptContent=''; }
+                const d=await api('GET','/api/admin/prompts'); this.prompts=d.prompts||[];
+            } catch(e) { showToast(e.message,'error'); }
+        },
+        async restoreDefault(){
+            if(!(await gvConfirm('恢复默认提示词将覆盖当前内容，确定？','恢复默认'))) return;
+            const defaults={
+                'default.txt':'你是一个高级视觉分析助手，能够准确、细致地分析用户提供的图片内容，并按用户要求给出结构化、清晰的回答。',
+                'ocr.txt':'你是一个专业 OCR 文字提取专家。请准确、完整地提取图片中的所有文字内容，保留原始排版，不要添加任何解释。',
+                'code.txt':'你是一个代码分析和错误诊断专家。请仔细分析图片中的代码，识别错误并给出修复建议，回答要清晰、具体。',
+                'ui.txt':'你是一个 UI/UX 设计分析专家。请从布局、配色、字体、交互等角度分析界面截图，并给出改进建议。',
+                'chart.txt':'你是一个数据可视化分析专家。请准确解读图表中的数据和趋势，给出条理清晰的结论。'};
+            try {
+                await api('PUT',`/api/admin/prompts/${this.currentPrompt}`,{content:defaults[this.currentPrompt]||''});
+                showToast('已恢复默认');
+                const d=await api('GET',`/api/admin/prompts/${this.currentPrompt}`);
+                this.promptContent=d.content;
+            } catch(e) { showToast(e.message||'恢复失败','error'); }
         }
     }
 }

@@ -1,81 +1,262 @@
 {% extends "base.html" %}
 {% block title %}视觉渠道管理{% endblock %}
 {% block content %}
-<h1>👁️ 视觉渠道管理</h1>
-<div x-data="visionProviders()">
-    <button class="btn btn-primary" @click="openCreate()">+ 新增视觉渠道</button>
-    <table class="data-table">
-        <thead><tr><th>ID</th><th>名称</th><th>Base URL</th><th>默认模型</th><th>最大图片</th><th>自定义参数</th><th>状态</th><th>操作</th></tr></thead>
-        <tbody>
-            <template x-for="(p, key) in providers" :key="key">
-                <tr>
-                    <td><code x-text="key"></code></td><td x-text="p.name"></td><td class="truncate" x-text="p.base_url"></td><td x-text="p.model"></td><td x-text="p.max_images"></td>
-                    <td><code x-text="Object.keys(p.extra_params||{}).length ? Object.keys(p.extra_params).join(', ') : '—'"></code></td>
-                    <td><span :class="p.enabled ? 'badge badge-success' : 'badge badge-muted'" x-text="p.enabled ? '启用' : '禁用'"></span></td>
-                    <td class="actions">
-                        <button class="btn btn-sm btn-outline" @click="editProvider(key, p)">编辑</button>
-                        <button class="btn btn-sm btn-outline" @click="testProvider(key)">测试</button>
-                        <button class="btn btn-sm btn-danger" @click="deleteProvider(key)">删除</button>
-                    </td>
-                </tr>
-            </template>
-        </tbody>
-    </table>
-    <div class="modal-overlay" x-show="showModal" @click.self="showModal=false">
-        <div class="modal">
-            <h3 x-text="editing ? '编辑视觉渠道' : '新增视觉渠道'"></h3>
-            <form @submit.prevent="saveProvider()">
-                <div class="form-group"><label>渠道 ID</label><input class="input" x-model="form.key" :disabled="editing"></div>
-                <div class="form-group"><label>名称</label><input class="input" x-model="form.name"></div>
-                <div class="form-group"><label>Base URL</label><input class="input" x-model="form.base_url"></div>
-                <div class="form-group"><label>API Key（留空不修改）</label><input class="input" x-model="form.api_key" type="password"></div>
-                <div class="form-group"><label>默认模型 ID</label><input class="input" x-model="form.model"></div>
-                <div class="form-group"><label>超时 (秒)</label><input class="input" x-model.number="form.timeout" type="number"></div>
-                <div class="form-group"><label>最大图片数</label><input class="input" x-model.number="form.max_images" type="number"></div>
-                <div class="form-group"><label>最大图片大小 (MB)</label><input class="input" x-model.number="form.max_image_size_mb" type="number"></div>
-                <div class="form-group">
-                    <label>自定义请求参数</label>
-                    <p class="hint">这些键值对会合并到视觉模型 /chat/completions 请求 payload 中（用户参数优先级高于默认）。例如 Qwen-VL 关闭思考：key=<code>enable_thinking</code>，value=<code>false</code></p>
-                    <div x-show="form.extra_params.length === 0" class="hint" style="color:#999">未配置自定义参数</div>
-                    <template x-for="(row, idx) in form.extra_params" :key="idx">
-                        <div style="display:flex;gap:8px;margin-bottom:6px;align-items:center">
-                            <input class="input" x-model="row.key" placeholder="参数名 (key)" style="flex:1">
-                            <input class="input" x-model="row.value" placeholder="值 (value，如 false / 0 / 字符串)" style="flex:1">
-                            <button type="button" class="btn btn-sm btn-danger" @click="form.extra_params.splice(idx, 1)">删除</button>
-                        </div>
+<div x-data="visionProviders()" x-init="init()">
+    <div class="page-head">
+        <div>
+            <h1>视觉渠道管理</h1>
+            <div class="sub">对接 GLM-4V、Qwen-VL 等视觉模型上游，为增强模型提供图像理解能力。</div>
+        </div>
+        <div class="page-head-actions">
+            <button class="btn btn-primary" @click="openCreate()">
+                <svg class="icon"><use href="#i-plus"/></svg>新增视觉渠道
+            </button>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-head">
+            <svg class="icon"><use href="#i-eye"/></svg>
+            <div>
+                <div class="card-title">视觉渠道列表</div>
+                <div class="card-title-sub" x-text="Object.keys(providers).length + ' 个渠道'"></div>
+            </div>
+        </div>
+        <div class="table-wrap">
+            <table class="data-table">
+                <thead>
+                    <tr><th>名称</th><th>ID</th><th>Base URL</th><th>默认模型</th><th>最大图片</th><th>自定义参数</th><th>状态</th><th style="text-align:right">操作</th></tr>
+                </thead>
+                <tbody>
+                    <template x-for="(p, key) in providers" :key="key">
+                        <tr>
+                            <td class="cell-primary" x-text="p.name || key"></td>
+                            <td><code class="inline" x-text="key"></code></td>
+                            <td>
+                                <div class="flex-center" style="gap:6px">
+                                    <code class="inline cell-truncate" style="max-width:200px" x-text="p.base_url"></code>
+                                    <button class="icon-btn" style="width:26px;height:26px" @click="gvCopy(p.base_url, 'Base URL 已复制')" title="复制">
+                                        <svg class="icon icon-sm"><use href="#i-copy"/></svg>
+                                    </button>
+                                </div>
+                            </td>
+                            <td x-text="p.model || '—'"></td>
+                            <td x-text="p.max_images"></td>
+                            <td>
+                                <template x-if="Object.keys(p.extra_params||{}).length > 0">
+                                    <span class="badge badge-info" x-text="Object.keys(p.extra_params).length + ' 项'"></span>
+                                </template>
+                                <template x-if="Object.keys(p.extra_params||{}).length === 0">
+                                    <span class="text-muted text-sm">—</span>
+                                </template>
+                            </td>
+                            <td>
+                                <span class="badge" :class="p.enabled ? 'badge-success' : 'badge-muted'">
+                                    <span class="dot" x-show="p.enabled"></span><span x-text="p.enabled ? '启用' : '禁用'"></span>
+                                </span>
+                            </td>
+                            <td>
+                                <div class="actions" style="justify-content:flex-end">
+                                    <button class="btn btn-sm btn-outline" @click="testProvider(key)">
+                                        <svg class="icon"><use href="#i-play"/></svg>测试
+                                    </button>
+                                    <button class="btn btn-sm btn-outline" @click="editProvider(key, p)">
+                                        <svg class="icon"><use href="#i-edit"/></svg>编辑
+                                    </button>
+                                    <button class="btn btn-sm btn-danger-ghost" @click="deleteProvider(key)">
+                                        <svg class="icon"><use href="#i-trash"/></svg>删除
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
                     </template>
-                    <button type="button" class="btn btn-sm btn-outline" @click="form.extra_params.push({key:'', value:''})">+ 添加参数</button>
+                    <tr x-show="Object.keys(providers).length === 0">
+                        <td colspan="8">
+                            <div class="empty">
+                                <div class="empty-icon"><svg class="icon"><use href="#i-eye"/></svg></div>
+                                <div class="empty-title">还没有视觉渠道</div>
+                                <div class="empty-desc">点击右上角「新增视觉渠道」，添加视觉模型上游，例如 GLM-4V-Flash。</div>
+                                <button class="btn btn-primary mt-12" @click="openCreate()">
+                                    <svg class="icon"><use href="#i-plus"/></svg>新增第一个视觉渠道
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Create / Edit modal -->
+    <div class="modal-overlay" x-show="showModal" x-cloak @click.self="showModal=false">
+        <div class="modal modal-wide">
+            <div class="modal-head">
+                <div class="modal-icon"><svg class="icon"><use href="#i-eye"/></svg></div>
+                <div>
+                    <div class="modal-title" x-text="editing ? '编辑视觉渠道' : '新增视觉渠道'"></div>
+                    <div class="modal-sub" x-text="editing ? form.key : '配置一个视觉模型上游'"></div>
                 </div>
-                <div class="form-group"><label><input type="checkbox" x-model="form.enabled"> 启用</label></div>
-                <div class="form-actions"><button type="submit" class="btn btn-primary">保存</button><button type="button" class="btn btn-ghost" @click="showModal=false">取消</button></div>
+                <button class="modal-close" @click="showModal=false"><svg class="icon"><use href="#i-x"/></svg></button>
+            </div>
+            <form @submit.prevent="saveProvider()">
+                <div class="modal-body">
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label class="label-req">渠道 ID</label>
+                            <input class="input" x-model="form.key" :disabled="editing" placeholder="例如 glm-4v" required x-ref="firstInput">
+                        </div>
+                        <div class="form-group">
+                            <label>渠道名称</label>
+                            <input class="input" x-model="form.name" placeholder="例如 Zhipu GLM-4V">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="label-req">Base URL</label>
+                        <input class="input" x-model="form.base_url" placeholder="https://open.bigmodel.cn/api/paas/v4" required>
+                    </div>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label>API Key <span class="text-muted" style="font-weight:400" x-text="editing ? '（留空不修改）' : ''"></span></label>
+                            <input class="input" x-model="form.api_key" type="password" placeholder="sk-..." autocomplete="new-password">
+                        </div>
+                        <div class="form-group">
+                            <label class="label-req">默认模型 ID</label>
+                            <input class="input" x-model="form.model" placeholder="glm-4v-flash" required>
+                        </div>
+                    </div>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label>超时时间（秒）</label>
+                            <input class="input" x-model.number="form.timeout" type="number" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label>最大图片数</label>
+                            <input class="input" x-model.number="form.max_images" type="number" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label>单张最大（MB）</label>
+                            <input class="input" x-model.number="form.max_image_size_mb" type="number" min="1">
+                        </div>
+                    </div>
+
+                    <div class="form-group" style="margin-top:18px">
+                        <div class="flex-between" style="margin-bottom:8px">
+                            <label style="margin-bottom:0">自定义请求参数</label>
+                            <button type="button" class="btn btn-sm btn-soft" @click="form.extra_params.push({key:'', value:''})">
+                                <svg class="icon"><use href="#i-plus"/></svg>添加参数
+                            </button>
+                        </div>
+                        <p class="hint" style="margin-top:0">这些键值对会合并到视觉模型 <code class="inline">/chat/completions</code> 请求中。例如 Qwen-VL 关闭思考：key=<code class="inline">enable_thinking</code>，value=<code class="inline">false</code></p>
+                        <div class="card" style="background:var(--bg-subtle);border:1px dashed var(--border-strong);margin-bottom:0">
+                            <div class="card-body" style="padding:14px">
+                                <div x-show="form.extra_params.length === 0" class="hint" style="text-align:center;padding:14px 0;color:var(--text-4)">未配置自定义参数</div>
+                                <template x-for="(row, idx) in form.extra_params" :key="idx">
+                                    <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
+                                        <input class="input" x-model="row.key" placeholder="参数名 (key)" style="flex:1" :style="{'font-family':'var(--font-mono)'}">
+                                        <input class="input" x-model="row.value" placeholder="值 (false / 0 / 字符串)" style="flex:1">
+                                        <button type="button" class="btn btn-sm btn-danger-ghost" @click="form.extra_params.splice(idx, 1)">
+                                            <svg class="icon"><use href="#i-trash"/></svg>
+                                        </button>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="switch-row">
+                        <div>
+                            <div class="switch-label">启用渠道</div>
+                            <div class="switch-desc">关闭后该渠道不可用</div>
+                        </div>
+                        <label class="switch"><input type="checkbox" x-model="form.enabled"><span class="track"></span></label>
+                    </div>
+                </div>
+                <div class="modal-foot">
+                    <button type="button" class="btn btn-ghost" @click="showModal=false">取消</button>
+                    <button type="submit" class="btn btn-primary">
+                        <svg class="icon"><use href="#i-check"/></svg><span x-text="editing ? '保存修改' : '创建渠道'"></span>
+                    </button>
+                </div>
             </form>
         </div>
     </div>
-    <div class="modal-overlay" x-show="showTestModal" @click.self="showTestModal=false">
-        <div class="modal">
-            <h3>测试视觉渠道</h3>
+
+    <!-- Test modal -->
+    <div class="modal-overlay" x-show="showTestModal" x-cloak @click.self="showTestModal=false">
+        <div class="modal modal-wide">
+            <div class="modal-head">
+                <div class="modal-icon" style="background:var(--info-soft);color:var(--info-text)"><svg class="icon"><use href="#i-play"/></svg></div>
+                <div>
+                    <div class="modal-title" x-text="'测试渠道: ' + testKey"></div>
+                    <div class="modal-sub">可上传图片做真实视觉分析，或仅测试连通性</div>
+                </div>
+                <button class="modal-close" @click="showTestModal=false;testResult=''"><svg class="icon"><use href="#i-x"/></svg></button>
+            </div>
             <form @submit.prevent="runTest()">
-                <div class="form-group"><label>测试问题</label><input class="input" x-model="testQuestion" placeholder="请输入测试问题"></div>
-                <div class="form-group"><label>上传图片</label><input type="file" @change="onFileChange" accept="image/*"></div>
-                <div class="form-group"><label>或只测试连通性（不上传图片）</label></div>
-                <div x-show="testResult" class="test-result" x-html="testResult"></div>
-                <div class="form-actions">
-                    <button type="submit" class="btn btn-primary">发送测试</button>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>测试问题</label>
+                        <input class="input" x-model="testQuestion" placeholder="例如：请描述这张图片的内容">
+                    </div>
+                    <div class="form-group">
+                        <label>上传图片 <span class="text-muted" style="font-weight:400">（可选，不上传则只测连通性）</span></label>
+                        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+                            <label class="btn btn-outline upload-btn" style="cursor:pointer">
+                                <svg class="icon"><use href="#i-upload"/></svg>
+                                <span x-text="testFile ? testFile.name : '选择图片'"></span>
+                                <input type="file" @change="onFileChange" accept="image/*">
+                            </label>
+                            <button type="button" class="btn btn-ghost btn-sm" x-show="testFile" @click="testFile=null">清除</button>
+                        </div>
+                    </div>
+                    <div x-show="testing" class="flex-center" style="gap:10px;padding:14px 0;color:var(--text-3)">
+                        <span class="spinner" style="border-color:rgba(16,185,129,.3);border-top-color:#10b981"></span>正在测试…
+                    </div>
+                    <div x-show="testResult" class="fade-enter" style="margin-top:6px">
+                        <div class="flex-center" style="margin-bottom:8px">
+                            <span class="badge" :class="testOk ? 'badge-success' : 'badge-danger'">
+                                <span x-text="testOk ? '✅ 测试成功' : '❌ 测试失败'"></span>
+                            </span>
+                            <span class="text-xs text-muted" x-text="testType === 'vision_test' ? '· 真实图片分析' : '· 连通性测试'"></span>
+                        </div>
+                        <pre class="code-block" style="background:#0f172a;color:#cbd5e1;padding:14px 16px;border-radius:12px;max-height:320px;overflow:auto" x-text="testResult"></pre>
+                    </div>
+                </div>
+                <div class="modal-foot">
                     <button type="button" class="btn btn-ghost" @click="showTestModal=false;testResult=''">关闭</button>
+                    <button type="submit" class="btn btn-primary" :disabled="testing">
+                        <svg class="icon" x-show="!testing"><use href="#i-play"/></svg>
+                        <span class="spinner" x-show="testing" style="border-color:rgba(255,255,255,.35);border-top-color:#fff"></span>
+                        <span x-text="testing ? '测试中…' : '发送测试'"></span>
+                    </button>
                 </div>
             </form>
         </div>
     </div>
 </div>
+
 <script>
 function visionProviders() {
     return {
-        providers:{}, showModal:false, editing:false, showTestModal:false, testQuestion:'', testFile:null, testResult:'', testKey:'',
+        providers:{}, showModal:false, editing:false,
+        showTestModal:false, testQuestion:'', testFile:null, testResult:'', testOk:false, testType:'', testKey:'', testing:false,
         form:{key:'', name:'', base_url:'', api_key:'', model:'', timeout:120, max_images:5, max_image_size_mb:10, extra_params:[], enabled:true},
         async init(){ const d=await api('GET','/api/admin/vision-providers'); this.providers=d.providers||{}; },
-        openCreate(){ this.editing=false; this.form={key:'',name:'',base_url:'',api_key:'',model:'',timeout:120,max_images:5,max_image_size_mb:10,extra_params:[],enabled:true}; this.showModal=true; },
-        editProvider(key,p){ this.editing=true; const ep=p.extra_params||{}; const rows=Object.keys(ep).map(k=>({key:k, value:String(ep[k])})); this.form={key,...p,api_key:'',extra_params:rows}; this.showModal=true; },
+        openCreate(){
+            this.editing=false;
+            this.form={key:'',name:'',base_url:'',api_key:'',model:'',timeout:120,max_images:5,max_image_size_mb:10,extra_params:[],enabled:true};
+            this.showModal=true;
+            this.$nextTick(()=>{ if(this.$refs.firstInput) this.$refs.firstInput.focus(); });
+        },
+        editProvider(key,p){
+            this.editing=true;
+            const ep=p.extra_params||{};
+            const rows=Object.keys(ep).map(k=>({key:k, value:String(ep[k])}));
+            this.form={key,...p,api_key:'',extra_params:rows};
+            this.showModal=true;
+        },
         async saveProvider(){
+            if(!this.form.key.trim()) return showToast('渠道 ID 不能为空','error');
             // 过滤空行 + 校验
             const rows = this.form.extra_params.filter(r => r.key.trim() !== '' || r.value.trim() !== '');
             for (const r of rows) {
@@ -96,28 +277,48 @@ function visionProviders() {
             const extraParams = {};
             for (const r of rows) extraParams[r.key.trim()] = parseValue(r.value);
             const body = {...this.form, extra_params: extraParams};
-            delete body.extra_params_rows;  // 防御性，实际无此字段
             const m=this.editing?'PUT':'POST';
             const u=this.editing?`/api/admin/vision-providers/${this.form.key}`:'/api/admin/vision-providers';
             try {
                 await api(m,u,body);
                 this.showModal=false;
-                showToast(this.editing?'已更新':'已创建');
+                showToast(this.editing?'视觉渠道已更新':'视觉渠道已创建');
                 location.reload();
             } catch(e) {
                 showToast(e.message||'保存失败','error');
             }
         },
-        async deleteProvider(key){ if(!confirm(`确定删除"${key}"？`))return; try{await api('DELETE',`/api/admin/vision-providers/${key}`);showToast('已删除');location.reload();}catch(e){showToast(e.message,'error');} },
-        testProvider(key){ this.testKey=key; this.testFile=null; this.testQuestion=''; this.testResult=''; this.showTestModal=true; },
-        onFileChange(e){ this.testFile=e.target.files[0]; },
+        async deleteProvider(key){
+            if(!(await gvConfirm(`确定删除视觉渠道「${key}」？此操作不可撤销。`))) return;
+            try {
+                await api('DELETE',`/api/admin/vision-providers/${key}`);
+                showToast('渠道已删除');
+                location.reload();
+            } catch(e) { showToast(e.message,'error'); }
+        },
+        testProvider(key){
+            this.testKey=key; this.testFile=null; this.testQuestion=''; this.testResult=''; this.testOk=false; this.testType=''; this.testing=false;
+            this.showTestModal=true;
+        },
+        onFileChange(e){ this.testFile=e.target.files[0] || null; },
         async runTest(){
-            const fd=new FormData(); fd.append('question',this.testQuestion);
+            if(this.testing) return;
+            this.testing=true; this.testResult='';
+            const fd=new FormData();
+            fd.append('question',this.testQuestion);
             if(this.testFile) fd.append('file',this.testFile);
-            this.testResult='<p>测试中...</p>';
-            try{ const r=await fetch(`/api/admin/vision-providers/${this.testKey}/test`,{method:'POST',body:fd}); const d=await r.json();
-                this.testResult=`<p><b>${d.ok?'✅ 成功':'❌ 失败'}</b> (${d.type})</p><pre>${JSON.stringify(d.result,null,2)}</pre>`; }
-            catch(e){ this.testResult=`<p>❌ 错误: ${e.message}</p>`; }
+            try {
+                const r=await fetch(`/api/admin/vision-providers/${this.testKey}/test`,{method:'POST',body:fd});
+                const d=await r.json().catch(()=>({ok:false,result:{error:'响应解析失败'}}));
+                this.testOk=!!d.ok;
+                this.testType=d.type||'';
+                this.testResult=JSON.stringify(d.result||{},null,2);
+                if(!d.ok && !d.result) this.testResult='测试失败';
+            } catch(e) {
+                this.testOk=false; this.testType='';
+                this.testResult='请求异常: '+e.message;
+            }
+            this.testing=false;
         }
     }
 }

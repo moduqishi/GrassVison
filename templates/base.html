@@ -4,63 +4,309 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}GrassVision{% endblock %}</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2310b981'/%3E%3Ctext x='16' y='22' font-size='17' text-anchor='middle'%3E🌿%3C/text%3E%3C/svg%3E">
     <link rel="stylesheet" href="/static/css/admin.css">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
 </head>
 <body>
-    <div class="app-layout">
-        <nav class="sidebar">
+    <!-- Inline SVG icon sprite -->
+    <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+        <symbol id="i-leaf" viewBox="0 0 24 24"><path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10z"/><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/></symbol>
+        <symbol id="i-dashboard" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></symbol>
+        <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></symbol>
+        <symbol id="i-eye" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></symbol>
+        <symbol id="i-puzzle" viewBox="0 0 24 24"><path d="M19.44 7.85c-.05.32.06.65.29.88l1.57 1.57c.47.47.7 1.09.7 1.7s-.23 1.24-.7 1.7l-1.61 1.61a.98.98 0 0 1-.84.28c-.47-.07-.8-.48-.97-.93a2.5 2.5 0 1 0-3.21 3.21c.45.17.85.5.93.97a.98.98 0 0 1-.28.84l-1.61 1.61a2.4 2.4 0 0 1-1.7.7 2.4 2.4 0 0 1-1.71-.7l-1.57-1.57a1.03 1.03 0 0 0-.88-.29c-.49.07-.84.5-1.02.97a2.5 2.5 0 1 1-3.24-3.24c.47-.18.9-.53.97-1.02a1.03 1.03 0 0 0-.29-.88L4.23 8.77A2.4 2.4 0 0 1 2 6.6c0-.62.24-1.23.7-1.7L4.23 3.3c.24-.24.58-.35.92-.3.51.08.88.53 1.07 1.01a2.5 2.5 0 1 0 3.26-3.26c-.48-.2-.93-.56-1.01-1.07-.05-.34.06-.68.3-.92L9.5 1.7A2.4 2.4 0 0 1 12 1c.62 0 1.23.24 1.7.7l1.57 1.57c.23.23.56.34.88.29.49-.07.84-.5 1.02-.97a2.5 2.5 0 1 1 3.24 3.24c-.47.18-.9.53-.97 1.02a1.03 1.03 0 0 0 .29.88l1.57 1.57c.47.47.7 1.09.7 1.7s-.23 1.24-.7 1.7l-1.61 1.61a.98.98 0 0 1-.84.28c-.47-.07-.8-.48-.97-.93a2.5 2.5 0 1 0-3.21 3.21c.45.17.85.5.93.97a.98.98 0 0 1-.28.84l-1.61 1.61a2.4 2.4 0 0 1-1.7.7 2.4 2.4 0 0 1-1.71-.7l-1.57-1.57a1.03 1.03 0 0 0-.88-.29c-.49.07-.84.5-1.02.97a2.5 2.5 0 1 1-3.24-3.24c.47-.18.9-.53.97-1.02z"/></symbol>
+        <symbol id="i-pen" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></symbol>
+        <symbol id="i-flask" viewBox="0 0 24 24"><path d="M9 2h6"/><path d="M10 2v6.5L4.8 18.7A2 2 0 0 0 6.6 21h10.8a2 2 0 0 0 1.8-2.3L14 8.5V2"/><path d="M7.5 15h9"/></symbol>
+        <symbol id="i-chart" viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></symbol>
+        <symbol id="i-sliders" viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></symbol>
+        <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></symbol>
+        <symbol id="i-list" viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></symbol>
+        <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></symbol>
+        <symbol id="i-plus" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></symbol>
+        <symbol id="i-edit" viewBox="0 0 24 24"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></symbol>
+        <symbol id="i-trash" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></symbol>
+        <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
+        <symbol id="i-check" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></symbol>
+        <symbol id="i-x" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></symbol>
+        <symbol id="i-refresh" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></symbol>
+        <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></symbol>
+        <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></symbol>
+        <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></symbol>
+        <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></symbol>
+        <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></symbol>
+        <symbol id="i-send" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></symbol>
+        <symbol id="i-chevron" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></symbol>
+        <symbol id="i-upload" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></symbol>
+        <symbol id="i-server" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></symbol>
+        <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></symbol>
+        <symbol id="i-zap" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></symbol>
+        <symbol id="i-key" viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></symbol>
+        <symbol id="i-box" viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></symbol>
+        <symbol id="i-activity" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></symbol>
+        <symbol id="i-star" viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></symbol>
+        <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></symbol>
+        <symbol id="i-menu" viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></symbol>
+        <symbol id="i-cpu" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></symbol>
+        <symbol id="i-play" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></symbol>
+    </svg>
+
+    <div class="app">
+        <aside class="sidebar" id="sidebar">
             <div class="sidebar-brand">
-                <h2>🌿 GrassVision</h2>
+                <div class="brand-logo"><svg class="icon"><use href="#i-leaf"/></svg></div>
+                <div>
+                    <div class="brand-name">GrassVision</div>
+                    <div class="brand-sub">图像增强网关</div>
+                </div>
             </div>
-            <ul class="sidebar-nav">
-                <li><a href="/admin/dashboard" class="nav-item">📊 首页</a></li>
-                <li><a href="/admin/source-providers" class="nav-item">🔗 源渠道</a></li>
-                <li><a href="/admin/vision-providers" class="nav-item">👁️ 视觉渠道</a></li>
-                <li><a href="/admin/models" class="nav-item">🧩 增强模型</a></li>
-                <li><a href="/admin/prompts" class="nav-item">📝 提示词</a></li>
-                <li><a href="/admin/playground" class="nav-item">🧪 在线测试</a></li>
-                <li><a href="/admin/stats" class="nav-item">📈 用量统计</a></li>
-                <li><a href="/admin/settings" class="nav-item">⚙️ 系统设置</a></li>
-                <li><a href="/admin/config-preview" class="nav-item">📄 配置预览</a></li>
-                <li><a href="/admin/logs" class="nav-item">📋 日志</a></li>
-            </ul>
+
+            <nav class="sidebar-nav">
+                <div class="nav-group">
+                    <div class="nav-group-title">概览</div>
+                    <a href="/admin/dashboard" class="nav-item" data-nav><svg class="icon"><use href="#i-dashboard"/></svg><span>管理首页</span></a>
+                </div>
+                <div class="nav-group">
+                    <div class="nav-group-title">渠道与模型</div>
+                    <a href="/admin/source-providers" class="nav-item" data-nav><svg class="icon"><use href="#i-link"/></svg><span>源渠道</span></a>
+                    <a href="/admin/vision-providers" class="nav-item" data-nav><svg class="icon"><use href="#i-eye"/></svg><span>视觉渠道</span></a>
+                    <a href="/admin/models" class="nav-item" data-nav><svg class="icon"><use href="#i-puzzle"/></svg><span>增强模型</span></a>
+                    <a href="/admin/prompts" class="nav-item" data-nav><svg class="icon"><use href="#i-pen"/></svg><span>视觉提示词</span></a>
+                </div>
+                <div class="nav-group">
+                    <div class="nav-group-title">工具</div>
+                    <a href="/admin/playground" class="nav-item" data-nav><svg class="icon"><use href="#i-flask"/></svg><span>在线测试</span></a>
+                </div>
+                <div class="nav-group">
+                    <div class="nav-group-title">监控</div>
+                    <a href="/admin/stats" class="nav-item" data-nav><svg class="icon"><use href="#i-chart"/></svg><span>用量统计</span></a>
+                    <a href="/admin/logs" class="nav-item" data-nav><svg class="icon"><use href="#i-list"/></svg><span>运行日志</span></a>
+                </div>
+                <div class="nav-group">
+                    <div class="nav-group-title">系统</div>
+                    <a href="/admin/settings" class="nav-item" data-nav><svg class="icon"><use href="#i-sliders"/></svg><span>系统设置</span></a>
+                    <a href="/admin/config-preview" class="nav-item" data-nav><svg class="icon"><use href="#i-file"/></svg><span>配置预览</span></a>
+                </div>
+            </nav>
+
             <div class="sidebar-footer">
-                <button onclick="logout()" class="btn btn-ghost btn-sm">退出登录</button>
+                <div class="sidebar-user">
+                    <div class="avatar">A</div>
+                    <div style="min-width:0">
+                        <div class="sidebar-user-name" x-data="{}" x-text="'admin'"></div>
+                        <div class="sidebar-user-role">管理员</div>
+                    </div>
+                </div>
+                <button class="logout-btn" onclick="logout()">
+                    <svg class="icon"><use href="#i-logout"/></svg>退出登录
+                </button>
             </div>
-        </nav>
-        <main class="main-content">
-            {% block content %}{% endblock %}
-        </main>
+        </aside>
+        <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
+        <div class="main-col">
+            <header class="topbar">
+                <button class="icon-btn menu-toggle" onclick="toggleSidebar()" title="菜单">
+                    <svg class="icon"><use href="#i-menu"/></svg>
+                </button>
+                <div>
+                    <div class="page-title" id="pageTitle">GrassVision</div>
+                    <div class="page-subtitle" id="pageSubtitle"></div>
+                </div>
+                <div class="topbar-actions">
+                    <span class="health-pill" id="healthPill" title="服务状态"><span class="dot"></span><span class="pill-text">服务运行中</span></span>
+                    <button class="icon-btn" onclick="reloadConfig()" title="重新加载配置">
+                        <svg class="icon"><use href="#i-refresh"/></svg>
+                    </button>
+                </div>
+            </header>
+            <main class="content">
+                {% block content %}{% endblock %}
+            </main>
+        </div>
     </div>
+
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- Confirm dialog -->
+    <div class="modal-overlay" id="confirmOverlay" style="display:none">
+        <div class="modal" style="max-width:400px">
+            <div class="modal-head">
+                <div class="modal-icon" style="background:var(--warning-soft);color:var(--warning-text)">
+                    <svg class="icon"><use href="#i-alert"/></svg>
+                </div>
+                <div>
+                    <div class="modal-title">请确认</div>
+                    <div class="modal-sub">此操作可能无法撤销</div>
+                </div>
+            </div>
+            <div class="modal-body" id="confirmText" style="font-size:13.5px;color:var(--text-2)"></div>
+            <div class="modal-foot">
+                <button class="btn btn-outline" id="confirmCancel">取消</button>
+                <button class="btn btn-danger-ghost" id="confirmOk">
+                    <svg class="icon"><use href="#i-check"/></svg>确认
+                </button>
+            </div>
+        </div>
+    </div>
+
     <script>
-        async function logout() {
-            await fetch('/api/admin/logout', {method:'POST'});
-            window.location.href = '/admin/login';
+        /* ── Page meta (title / subtitle per route) ─────────────── */
+        const PAGE_META = {
+            '/admin/dashboard':      ['管理首页', 'GrassVision 服务总览'],
+            '/admin/source-providers':['源渠道管理', '对接文本模型上游'],
+            '/admin/vision-providers':['视觉渠道管理', '对接视觉模型上游'],
+            '/admin/models':          ['增强模型管理', '组合源渠道与视觉增强'],
+            '/admin/prompts':         ['视觉提示词管理', '配置视觉分析指令'],
+            '/admin/playground':      ['在线测试', '体验增强模型的完整链路'],
+            '/admin/stats':           ['用量统计', '调用量与 Token 消耗'],
+            '/admin/logs':            ['运行日志', '服务运行记录'],
+            '/admin/settings':        ['系统设置', '服务与安全配置'],
+            '/admin/config-preview':  ['配置预览', '查看 / 编辑 config.yaml'],
+        };
+        function setPageMeta(title, sub) {
+            const t = document.getElementById('pageTitle');
+            const s = document.getElementById('pageSubtitle');
+            if (title && t) t.textContent = title;
+            if (sub && s) s.textContent = sub;
+            if (title) document.title = title + ' - GrassVision';
         }
+        (function initNav() {
+            const path = location.pathname;
+            let best = null, bestLen = -1;
+            document.querySelectorAll('[data-nav]').forEach(a => {
+                const href = a.getAttribute('href');
+                if (path === href || path.startsWith(href)) {
+                    if (href.length > bestLen) { best = a; bestLen = href.length; }
+                }
+            });
+            if (best) best.classList.add('active');
+            const meta = PAGE_META[path];
+            if (meta) setPageMeta(meta[0], meta[1]);
+        })();
+
+        /* ── Sidebar (mobile) ───────────────────────────────────── */
+        function toggleSidebar(force) {
+            const sb = document.getElementById('sidebar');
+            const bk = document.getElementById('sidebarBackdrop');
+            const open = typeof force === 'boolean' ? force : !sb.classList.contains('open');
+            sb.classList.toggle('open', open);
+            bk.classList.toggle('open', open);
+        }
+        document.addEventListener('click', e => {
+            if (e.target.id === 'sidebarBackdrop') toggleSidebar(false);
+        });
+
+        /* ── Health polling ─────────────────────────────────────── */
+        async function pollHealth() {
+            try {
+                const r = await fetch('/health', { cache: 'no-store' });
+                const ok = r.ok;
+                const pill = document.getElementById('healthPill');
+                pill.classList.toggle('down', !ok);
+                const txt = pill.querySelector('.pill-text');
+                if (txt) txt.textContent = ok ? '服务运行中' : '服务异常';
+            } catch (_) {
+                const pill = document.getElementById('healthPill');
+                pill.classList.add('down');
+                const txt = pill.querySelector('.pill-text');
+                if (txt) txt.textContent = '服务异常';
+            }
+        }
+        pollHealth();
+        setInterval(pollHealth, 30000);
+
+        /* ── API helper ─────────────────────────────────────────── */
         async function api(method, url, body) {
-            const opts = {method, headers:{'Content-Type':'application/json'}};
+            const opts = { method, headers: { 'Content-Type': 'application/json' } };
             if (body) opts.body = JSON.stringify(body);
             const r = await fetch(url, opts);
             if (r.status === 401) { window.location.href = '/admin/login'; return; }
             const data = await r.json().catch(() => ({}));
             if (!r.ok) {
                 let msg = data.error || data.detail || r.statusText;
-                if (Array.isArray(msg)) {
-                    msg = msg.map(e => typeof e === 'object' ? (e.msg || JSON.stringify(e)) : e).join('; ');
-                } else if (typeof msg === 'object' && msg !== null) {
-                    msg = msg.message || msg.msg || JSON.stringify(msg);
-                }
+                if (typeof msg === 'string' && msg.startsWith('{')) { try { msg = JSON.parse(msg).message || msg; } catch (_) {} }
+                if (Array.isArray(msg)) msg = msg.map(e => typeof e === 'object' ? (e.msg || JSON.stringify(e)) : e).join('; ');
+                else if (msg && typeof msg === 'object') msg = msg.message || msg.msg || JSON.stringify(msg);
                 throw new Error(msg);
             }
             return data;
         }
-        function showToast(msg, type='success') {
-            const t = document.createElement('div');
-            t.className = `toast toast-${type}`;
-            t.textContent = msg;
-            document.body.appendChild(t);
-            setTimeout(() => t.remove(), 3000);
+
+        /* ── Toast ──────────────────────────────────────────────── */
+        const TOAST_ICONS = { success: 'i-check', error: 'i-alert', info: 'i-info' };
+        function showToast(msg, type = 'success', duration = 3200) {
+            const container = document.getElementById('toastContainer');
+            const el = document.createElement('div');
+            el.className = `toast toast-${type}`;
+            el.innerHTML = `<svg class="icon"><use href="#${TOAST_ICONS[type] || 'i-info'}"/></svg><div style="min-width:0">${msg}</div>`;
+            container.appendChild(el);
+            setTimeout(() => {
+                el.classList.add('leaving');
+                setTimeout(() => el.remove(), 190);
+            }, duration);
+        }
+
+        /* ── Confirm dialog (replaces window.confirm) ───────────── */
+        function gvConfirm(message, title = '请确认') {
+            return new Promise(resolve => {
+                const overlay = document.getElementById('confirmOverlay');
+                document.getElementById('confirmText').textContent = message;
+                document.querySelector('#confirmOverlay .modal-title').textContent = title;
+                overlay.style.display = 'flex';
+                const done = val => {
+                    overlay.style.display = 'none';
+                    document.removeEventListener('keydown', onKey, true);
+                    resolve(val);
+                };
+                const onKey = e => {
+                    if (e.key === 'Escape') { e.preventDefault(); done(false); }
+                    if (e.key === 'Enter') { e.preventDefault(); done(true); }
+                };
+                document.getElementById('confirmOk').onclick = () => done(true);
+                document.getElementById('confirmCancel').onclick = () => done(false);
+                document.addEventListener('keydown', onKey, true);
+                document.getElementById('confirmOk').focus();
+            });
+        }
+
+        /* ── Copy to clipboard ──────────────────────────────────── */
+        async function gvCopy(text, label = '已复制') {
+            try {
+                await navigator.clipboard.writeText(text);
+                showToast(label);
+            } catch (_) {
+                const ta = document.createElement('textarea');
+                ta.value = text; document.body.appendChild(ta); ta.select();
+                try { document.execCommand('copy'); showToast(label); } catch (__) { showToast('复制失败', 'error'); }
+                ta.remove();
+            }
+        }
+
+        /* ── Misc ───────────────────────────────────────────────── */
+        async function logout() {
+            await fetch('/api/admin/logout', { method: 'POST' });
+            window.location.href = '/admin/login';
+        }
+        async function reloadConfig() {
+            try {
+                await api('POST', '/api/admin/reload');
+                showToast('配置已重新加载');
+                setTimeout(() => location.reload(), 400);
+            } catch (e) { showToast('加载失败: ' + e.message, 'error'); }
+        }
+        function formatTokens(n) {
+            if (!n) return '0';
+            if (n >= 1000000) return (n / 1000000).toFixed(2).replace(/\.?0+$/, '') + 'M';
+            if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
+            return String(n);
+        }
+        function formatTime(iso) {
+            if (!iso) return '-';
+            const d = new Date(iso);
+            if (isNaN(d)) return iso;
+            const p = n => String(n).padStart(2, '0');
+            return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
         }
     </script>
 </body>

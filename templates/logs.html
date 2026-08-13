@@ -1,27 +1,101 @@
 {% extends "base.html" %}
-{% block title %}日志查看{% endblock %}
+{% block title %}运行日志{% endblock %}
 {% block content %}
-<h1>📋 日志查看</h1>
-<div x-data="logViewer()">
-    <div class="toolbar">
-        <input class="input" x-model="keyword" placeholder="搜索关键词..." @keyup.enter="loadLogs()" style="max-width:300px">
-        <label><input type="checkbox" x-model="errorOnly" @change="loadLogs()">仅显示错误</label>
-        <label><input type="checkbox" x-model="autoRefresh">自动刷新</label>
-        <button class="btn btn-outline" @click="loadLogs()">刷新</button>
-        <button class="btn btn-outline" @click="clearLogs()">清空</button>
-        <button class="btn btn-outline" @click="downloadLogs()">下载</button>
+<div x-data="logViewer()" x-init="init()">
+    <div class="page-head">
+        <div>
+            <h1>运行日志</h1>
+            <div class="sub">显示最近 <span x-text="limit"></span> 行服务日志。</div>
+        </div>
+        <div class="page-head-actions">
+            <button class="btn btn-outline" @click="loadLogs()">
+                <svg class="icon"><use href="#i-refresh"/></svg>刷新
+            </button>
+            <button class="btn btn-outline" @click="downloadLogs()">
+                <svg class="icon"><use href="#i-download"/></svg>下载
+            </button>
+            <button class="btn btn-danger-ghost" @click="clearLogs()">
+                <svg class="icon"><use href="#i-trash"/></svg>清空
+            </button>
+        </div>
     </div>
-    <div class="card"><pre class="log-box" x-ref="logBox"><template x-for="line in lines"><div x-text="line"></div></template></pre></div>
-    <p style="margin-top:8px;color:var(--text-muted)">共 <span x-text="total"></span> 行</p>
+
+    <div class="card">
+        <div class="card-head" style="flex-wrap:wrap">
+            <div style="position:relative;flex:1;min-width:220px;max-width:380px">
+                <svg class="icon" style="position:absolute;left:11px;top:9px;color:var(--text-4)"><use href="#i-search"/></svg>
+                <input class="input" style="padding-left:34px" x-model="keyword" placeholder="搜索关键词…" @keyup.enter="loadLogs()">
+            </div>
+            <div class="flex-center" style="gap:16px;margin-left:auto;flex-wrap:wrap">
+                <span class="flex-center" style="gap:7px;font-size:13px;color:var(--text-2)">
+                    <label class="switch" style="transform:scale(.85)"><input type="checkbox" x-model="errorOnly" @change="loadLogs()"><span class="track"></span></label>
+                    仅显示错误
+                </span>
+                <span class="flex-center" style="gap:7px;font-size:13px;color:var(--text-2)">
+                    <label class="switch" style="transform:scale(.85)"><input type="checkbox" x-model="autoRefresh"><span class="track"></span></label>
+                    自动刷新
+                </span>
+                <span class="badge badge-muted" x-text="total + ' 行'"></span>
+            </div>
+        </div>
+        <div class="log-box" x-ref="logBox">
+            <template x-for="(line, i) in lines" :key="i">
+                <div class="log-line">
+                    <span class="ts" x-text="line.ts ? line.ts + ' | ' : ''"></span>
+                    <span :class="'log-' + line.level" x-text="line.level ? line.level.padEnd(5) + ' | ' : ''"></span>
+                    <span x-text="line.msg"></span>
+                </div>
+            </template>
+            <div x-show="!lines.length" style="text-align:center;padding:40px 0;color:#64748b">
+                <template x-if="keyword || errorOnly">没有匹配的日志行</template>
+                <template x-if="!keyword && !errorOnly">暂无日志</template>
+            </div>
+        </div>
+    </div>
 </div>
+
 <script>
 function logViewer() {
     return {
-        lines:[], total:0, keyword:'', errorOnly:false, autoRefresh:false,
-        async init(){ await this.loadLogs(); setInterval(()=>{ if(this.autoRefresh) this.loadLogs(); },3000); },
-        async loadLogs(){ const p=new URLSearchParams({lines:200}); if(this.keyword) p.set('keyword',this.keyword); if(this.errorOnly) p.set('error_only','1'); const r=await fetch('/api/admin/logs?'+p); const d=await r.json(); this.lines=d.lines; this.total=d.total; },
-        async clearLogs(){ if(!confirm('确定清空日志？'))return; await api('DELETE','/api/admin/logs'); this.lines=[]; this.total=0; showToast('日志已清空'); },
-        downloadLogs(){ const blob=new Blob([this.lines.join('\n')],{type:'text/plain'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='grassvision.log'; a.click(); }
+        lines:[], total:0, keyword:'', errorOnly:false, autoRefresh:false, limit:200,
+        async init(){
+            await this.loadLogs();
+            setInterval(()=>{ if(this.autoRefresh && !document.hidden) this.loadLogs(); }, 3000);
+        },
+        parseLine(raw){
+            const m=raw.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s*\|\s*(\w+)\s*\|\s?(.*)$/);
+            if(m) return {ts:m[1], level:m[2], msg:m[3]};
+            return {ts:'', level:'', msg:raw};
+        },
+        async loadLogs(){
+            const p=new URLSearchParams({lines:this.limit});
+            if(this.keyword) p.set('keyword',this.keyword);
+            if(this.errorOnly) p.set('error_only','1');
+            try{
+                const r=await fetch('/api/admin/logs?'+p);
+                const d=await r.json();
+                this.total=d.total;
+                this.lines=(d.lines||[]).map(l=>this.parseLine(l));
+                this.$nextTick(()=>{ const el=this.$refs.logBox; if(el) el.scrollTop=el.scrollHeight; });
+            }catch(e){ showToast('加载日志失败','error'); }
+        },
+        async clearLogs(){
+            if(!(await gvConfirm('确定清空所有日志文件内容？','清空日志'))) return;
+            try {
+                await api('DELETE','/api/admin/logs');
+                this.lines=[]; this.total=0;
+                showToast('日志已清空');
+            } catch(e) { showToast(e.message||'清空失败','error'); }
+        },
+        downloadLogs(){
+            const txt=this.lines.map(l=>(l.ts?l.ts+' | ':'')+(l.level?l.level.padEnd(5)+' | ':'')+l.msg).join('\n');
+            const blob=new Blob([txt],{type:'text/plain;charset=utf-8'});
+            const a=document.createElement('a');
+            a.href=URL.createObjectURL(blob);
+            a.download='grassvision.log';
+            a.click();
+            URL.revokeObjectURL(a.href);
+        }
     }
 }
 </script>

@@ -1,70 +1,228 @@
 {% extends "base.html" %}
 {% block title %}增强模型管理{% endblock %}
 {% block content %}
-<h1>🧩 增强模型管理</h1>
-<div x-data="modelManager()">
-    <button class="btn btn-primary" @click="openCreate()">+ 新增模型</button>
-    <table class="data-table">
-        <thead><tr><th>公开 ID</th><th>名称</th><th>源渠道</th><th>源模型</th><th>视觉增强</th><th>视觉渠道</th><th>状态</th><th>操作</th></tr></thead>
-        <tbody>
-            <template x-for="(m, key) in models" :key="key">
-                <tr>
-                    <td><code x-text="key"></code></td><td x-text="m.name"></td><td x-text="m.source_provider"></td><td x-text="m.source_model"></td>
-                    <td><span :class="m.vision_enabled ? 'badge badge-success' : 'badge badge-muted'" x-text="m.vision_enabled ? '开' : '关'"></span></td>
-                    <td x-text="m.vision_provider"></td>
-                    <td><span :class="m.enabled ? 'badge badge-success' : 'badge badge-muted'" x-text="m.enabled ? '启用' : '禁用'"></span></td>
-                    <td class="actions">
-                        <button class="btn btn-sm btn-outline" @click="editModel(key, m)">编辑</button>
-                        <button class="btn btn-sm btn-outline" @click="copyModel(key, m)">复制</button>
-                        <button class="btn btn-sm btn-danger" @click="deleteModel(key)">删除</button>
-                    </td>
-                </tr>
-            </template>
-        </tbody>
-    </table>
+<div x-data="modelManager()" x-init="init()">
+    <div class="page-head">
+        <div>
+            <h1>增强模型管理</h1>
+            <div class="sub">组合「源渠道 + 视觉增强」，对外暴露一个统一的模型 ID。</div>
+        </div>
+        <div class="page-head-actions">
+            <button class="btn btn-primary" @click="openCreate()">
+                <svg class="icon"><use href="#i-plus"/></svg>新增模型
+            </button>
+        </div>
+    </div>
 
-    <!-- Modal -->
-    <div class="modal-overlay" x-show="showModal" @click.self="showModal=false">
+    <div class="card">
+        <div class="card-head">
+            <svg class="icon"><use href="#i-puzzle"/></svg>
+            <div>
+                <div class="card-title">增强模型列表</div>
+                <div class="card-title-sub" x-text="Object.keys(models).length + ' 个模型'"></div>
+            </div>
+        </div>
+        <div class="table-wrap">
+            <table class="data-table">
+                <thead>
+                    <tr><th>公开 ID</th><th>名称</th><th>源渠道</th><th>源模型</th><th>视觉增强</th><th>视觉渠道</th><th>状态</th><th style="text-align:right">操作</th></tr>
+                </thead>
+                <tbody>
+                    <template x-for="(m, key) in models" :key="key">
+                        <tr>
+                            <td><code class="inline" x-text="key"></code></td>
+                            <td class="cell-primary" x-text="m.name || '—'"></td>
+                            <td x-text="m.source_provider || '—'"></td>
+                            <td class="cell-mono cell-truncate" x-text="m.source_model || '—'"></td>
+                            <td>
+                                <span class="badge" :class="m.vision_enabled ? 'badge-success' : 'badge-muted'">
+                                    <span class="dot" x-show="m.vision_enabled"></span><span x-text="m.vision_enabled ? '开启' : '关闭'"></span>
+                                </span>
+                            </td>
+                            <td class="cell-mono" x-text="m.vision_provider || '—'"></td>
+                            <td>
+                                <span class="badge" :class="m.enabled ? 'badge-success' : 'badge-muted'">
+                                    <span class="dot" x-show="m.enabled"></span><span x-text="m.enabled ? '启用' : '禁用'"></span>
+                                </span>
+                            </td>
+                            <td>
+                                <div class="actions" style="justify-content:flex-end">
+                                    <button class="btn btn-sm btn-outline" @click="editModel(key, m)" title="编辑">
+                                        <svg class="icon"><use href="#i-edit"/></svg>编辑
+                                    </button>
+                                    <button class="btn btn-sm btn-outline" @click="copyModel(key, m)" title="复制为副本">
+                                        <svg class="icon"><use href="#i-copy"/></svg>复制
+                                    </button>
+                                    <button class="btn btn-sm btn-danger-ghost" @click="deleteModel(key)">
+                                        <svg class="icon"><use href="#i-trash"/></svg>删除
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                    </template>
+                    <tr x-show="Object.keys(models).length === 0">
+                        <td colspan="8">
+                            <div class="empty">
+                                <div class="empty-icon"><svg class="icon"><use href="#i-puzzle"/></svg></div>
+                                <div class="empty-title">还没有增强模型</div>
+                                <div class="empty-desc">例如「deepseek-vision」：源模型 DeepSeek Chat + 视觉模型 GLM-4V-Flash。</div>
+                                <button class="btn btn-primary mt-12" @click="openCreate()">
+                                    <svg class="icon"><use href="#i-plus"/></svg>创建第一个模型
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Create / Edit modal -->
+    <div class="modal-overlay" x-show="showModal" x-cloak @click.self="showModal=false">
         <div class="modal modal-wide">
-            <h3 x-text="editing ? '编辑模型' : '新增模型'"></h3>
+            <div class="modal-head">
+                <div class="modal-icon"><svg class="icon"><use href="#i-puzzle"/></svg></div>
+                <div>
+                    <div class="modal-title" x-text="editing ? '编辑模型' : '新增增强模型'"></div>
+                    <div class="modal-sub" x-text="editing ? form.model_id : '配置源渠道与视觉增强'"></div>
+                </div>
+                <button class="modal-close" @click="showModal=false"><svg class="icon"><use href="#i-x"/></svg></button>
+            </div>
             <form @submit.prevent="saveModel()">
-                <div class="form-group"><label>公开模型 ID</label><input class="input" x-model="form.model_id" :disabled="editing" required></div>
-                <div class="form-group"><label>显示名称</label><input class="input" x-model="form.name"></div>
-                <div class="form-group"><label>源渠道</label><select class="input" x-model="form.source_provider" @change="onSourceProviderChange()"><option value="">-- 选择 --</option><template x-for="s in sourceKeys"><option :value="s" x-text="s"></option></template></select></div>
-                <div class="form-group">
-                    <label>源模型 ID</label>
-                    <div class="input-row">
-                        <input class="input" x-model="form.source_model" :list="'source-models-'+form.source_provider" placeholder="输入或从列表选择">
-                        <datalist :id="'source-models-'+form.source_provider">
-                            <template x-for="m in sourceModels[form.source_provider]" :key="m"><option :value="m"></option></template>
-                        </datalist>
-                        <button type="button" class="btn btn-sm btn-outline" @click="fetchSourceModels()" :disabled="!form.source_provider||sourceLoading">🔄 拉取列表</button>
+                <div class="modal-body">
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label class="label-req">公开模型 ID</label>
+                            <input class="input" x-model="form.model_id" :disabled="editing" placeholder="例如 deepseek-vision" required x-ref="firstInput">
+                            <p class="hint" x-show="!editing">客户端调用时使用的模型 ID。</p>
+                        </div>
+                        <div class="form-group">
+                            <label>显示名称</label>
+                            <input class="input" x-model="form.name" placeholder="例如 DeepSeek Vision">
+                        </div>
                     </div>
-                    <p class="hint" x-text="sourceModelCount"></p>
-                </div>
-                <div class="form-group"><label><input type="checkbox" x-model="form.vision_enabled"> 启用视觉增强</label></div>
-                <div class="form-group"><label>视觉渠道</label><select class="input" x-model="form.vision_provider" @change="onVisionProviderChange()"><option value="">-- 选择 --</option><template x-for="v in visionKeys"><option :value="v" x-text="v"></option></template></select></div>
-                <div class="form-group">
-                    <label>视觉模型 ID</label>
-                    <div class="input-row">
-                        <input class="input" x-model="form.vision_model" :list="'vision-models-'+form.vision_provider" placeholder="输入或从列表选择">
-                        <datalist :id="'vision-models-'+form.vision_provider">
-                            <template x-for="m in visionModels[form.vision_provider]" :key="m"><option :value="m"></option></template>
-                        </datalist>
-                        <button type="button" class="btn btn-sm btn-outline" @click="fetchVisionModels()" :disabled="!form.vision_provider||visionLoading">🔄 拉取列表</button>
+
+                    <div class="card" style="background:var(--bg-subtle);border:1px dashed var(--border-strong);margin-bottom:16px">
+                        <div class="card-body" style="padding:16px">
+                            <div class="flex-between" style="margin-bottom:12px">
+                                <div class="flex-center" style="gap:8px">
+                                    <svg class="icon" style="color:var(--info-text)"><use href="#i-link"/></svg>
+                                    <span style="font-weight:700;font-size:13.5px">源模型（文本推理）</span>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>源渠道</label>
+                                <select class="input" x-model="form.source_provider" @change="onSourceProviderChange()">
+                                    <option value="">-- 选择渠道 --</option>
+                                    <template x-for="s in sourceKeys"><option :value="s" x-text="s"></option></template>
+                                </select>
+                            </div>
+                            <div class="form-group" style="margin-bottom:0">
+                                <label>源模型 ID</label>
+                                <div class="input-row">
+                                    <input class="input" x-model="form.source_model" :list="'source-models-'+form.source_provider" placeholder="输入或从列表选择">
+                                    <datalist :id="'source-models-'+form.source_provider">
+                                        <template x-for="m in sourceModels[form.source_provider]" :key="m"><option :value="m"></option></template>
+                                    </datalist>
+                                    <button type="button" class="btn btn-outline btn-sm" @click="fetchSourceModels()" :disabled="!form.source_provider || sourceLoading" style="white-space:nowrap">
+                                        <svg class="icon" x-show="!sourceLoading"><use href="#i-refresh"/></svg>
+                                        <span class="spinner" x-show="sourceLoading" style="border-color:rgba(16,185,129,.3);border-top-color:#10b981"></span>
+                                        <span x-text="sourceLoading ? '拉取中' : '拉取列表'"></span>
+                                    </button>
+                                </div>
+                                <p class="hint" x-text="sourceModelCount"></p>
+                            </div>
+                        </div>
                     </div>
-                    <p class="hint" x-text="visionModelCount"></p>
+
+                    <div class="card" style="background:var(--bg-subtle);border:1px dashed var(--border-strong);margin-bottom:16px">
+                        <div class="card-body" style="padding:16px">
+                            <div class="flex-between" style="margin-bottom:12px">
+                                <div class="flex-center" style="gap:8px">
+                                    <svg class="icon" style="color:var(--primary-text)"><use href="#i-eye"/></svg>
+                                    <span style="font-weight:700;font-size:13.5px">视觉增强</span>
+                                </div>
+                                <label class="switch"><input type="checkbox" x-model="form.vision_enabled"><span class="track"></span></label>
+                            </div>
+                            <template x-if="form.vision_enabled">
+                                <div>
+                                    <div class="form-grid">
+                                        <div class="form-group">
+                                            <label>视觉渠道</label>
+                                            <select class="input" x-model="form.vision_provider" @change="onVisionProviderChange()">
+                                                <option value="">-- 选择渠道 --</option>
+                                                <template x-for="v in visionKeys"><option :value="v" x-text="v"></option></template>
+                                            </select>
+                                        </div>
+                                        <div class="form-group">
+                                            <label>视觉模型 ID</label>
+                                            <div class="input-row">
+                                                <input class="input" x-model="form.vision_model" :list="'vision-models-'+form.vision_provider" placeholder="输入或从列表选择">
+                                                <datalist :id="'vision-models-'+form.vision_provider">
+                                                    <template x-for="m in visionModels[form.vision_provider]" :key="m"><option :value="m"></option></template>
+                                                </datalist>
+                                                <button type="button" class="btn btn-outline btn-sm" @click="fetchVisionModels()" :disabled="!form.vision_provider || visionLoading" style="white-space:nowrap">
+                                                    <svg class="icon" x-show="!visionLoading"><use href="#i-refresh"/></svg>
+                                                    <span class="spinner" x-show="visionLoading" style="border-color:rgba(16,185,129,.3);border-top-color:#10b981"></span>
+                                                    <span x-text="visionLoading ? '拉取中' : '拉取列表'"></span>
+                                                </button>
+                                            </div>
+                                            <p class="hint" x-text="visionModelCount"></p>
+                                        </div>
+                                    </div>
+                                    <div class="form-grid">
+                                        <div class="form-group">
+                                            <label>视觉提示词</label>
+                                            <select class="input" x-model="form.vision_prompt">
+                                                <template x-for="pf in promptFiles"><option :value="'prompts/'+pf" x-text="pf"></option></template>
+                                            </select>
+                                        </div>
+                                        <div class="form-group">
+                                            <label>视觉失败处理</label>
+                                            <select class="input" x-model="form.vision_failure_mode">
+                                                <option value="error">返回错误</option>
+                                                <option value="skip">跳过视觉，继续请求</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div class="form-group" style="margin-bottom:0">
+                                        <label>缓存提示词（可选）</label>
+                                        <input class="input" x-model="form.cache_prompt" placeholder="留空使用全局 prompts/cache.txt">
+                                    </div>
+                                </div>
+                            </template>
+                            <template x-if="!form.vision_enabled">
+                                <p class="hint" style="margin:0;padding:10px 0">关闭视觉增强后，模型将仅转发到源渠道（等效普通中转）。</p>
+                            </template>
+                        </div>
+                    </div>
+
+                    <div class="switch-row">
+                        <div>
+                            <div class="switch-label">替换响应模型 ID</div>
+                            <div class="switch-desc">响应中的 model 字段改为公开模型 ID</div>
+                        </div>
+                        <label class="switch"><input type="checkbox" x-model="form.replace_response_model"><span class="track"></span></label>
+                    </div>
+                    <div class="switch-row">
+                        <div>
+                            <div class="switch-label">启用模型</div>
+                            <div class="switch-desc">关闭后客户端无法调用该模型</div>
+                        </div>
+                        <label class="switch"><input type="checkbox" x-model="form.enabled"><span class="track"></span></label>
+                    </div>
                 </div>
-                <div class="form-group"><label>视觉提示词</label><select class="input" x-model="form.vision_prompt"><template x-for="pf in promptFiles"><option :value="'prompts/'+pf" x-text="pf"></option></template></select></div>
-                <div class="form-group"><label>缓存提示词（可选）</label><input class="input" x-model="form.cache_prompt" placeholder="留空使用全局 prompts/cache.txt"><p class="hint">留空使用全局默认缓存提示词</p></div>
-                <div class="form-group"><label>失败处理</label><select class="input" x-model="form.vision_failure_mode"><option value="error">返回错误</option><option value="skip">跳过视觉继续</option></select></div>
-                <div class="form-group"><label><input type="checkbox" x-model="form.replace_response_model"> 替换响应模型 ID</label></div>
-                <div class="form-group"><label><input type="checkbox" x-model="form.enabled"> 启用</label></div>
-                <div class="form-actions"><button type="submit" class="btn btn-primary">保存</button><button type="button" class="btn btn-ghost" @click="showModal=false">取消</button></div>
+                <div class="modal-foot">
+                    <button type="button" class="btn btn-ghost" @click="showModal=false">取消</button>
+                    <button type="submit" class="btn btn-primary">
+                        <svg class="icon"><use href="#i-check"/></svg><span x-text="editing ? '保存修改' : '创建模型'"></span>
+                    </button>
+                </div>
             </form>
         </div>
     </div>
 </div>
+
 <script>
 function modelManager() {
     return {
@@ -76,27 +234,38 @@ function modelManager() {
 
         get sourceModelCount(){
             const arr=this.sourceModels[this.form.source_provider];
-            return arr&&arr.length ? `已加载 ${arr.length} 个模型，可直接输入自定义 ID` : '可先拉取列表或直接输入自定义 ID';
+            return arr&&arr.length ? `已加载 ${arr.length} 个模型，也可直接输入自定义 ID` : '可点击「拉取列表」，或直接输入自定义 ID';
         },
         get visionModelCount(){
             const arr=this.visionModels[this.form.vision_provider];
-            return arr&&arr.length ? `已加载 ${arr.length} 个模型，可直接输入自定义 ID` : '可先拉取列表或直接输入自定义 ID';
+            return arr&&arr.length ? `已加载 ${arr.length} 个模型，也可直接输入自定义 ID` : '可点击「拉取列表」，或直接输入自定义 ID';
         },
 
         async init(){ const d=await api('GET','/api/admin/models'); this.models=d.models||{}; },
-        openCreate(){ this.editing=false; this.form={model_id:'',name:'',source_provider:'',source_model:'',vision_enabled:false,vision_provider:'',vision_model:'',vision_prompt:'prompts/default.txt',cache_prompt:null,vision_failure_mode:'error',replace_response_model:true,enabled:true}; this.showModal=true; },
-        editModel(key,m){ this.editing=true; this.form={model_id:key,...m}; this.showModal=true; },
-        copyModel(key,m){ this.editing=false; this.form={model_id:key+'-copy',...m,model_id:key+'-copy'}; this.showModal=true; },
+        openCreate(){
+            this.editing=false;
+            this.form={model_id:'',name:'',source_provider:'',source_model:'',vision_enabled:false,vision_provider:'',vision_model:'',vision_prompt:'prompts/default.txt',cache_prompt:null,vision_failure_mode:'error',replace_response_model:true,enabled:true};
+            this.showModal=true;
+            this.$nextTick(()=>{ if(this.$refs.firstInput) this.$refs.firstInput.focus(); });
+        },
+        editModel(key,m){
+            this.editing=true;
+            this.form={model_id:key,...m};
+            this.showModal=true;
+        },
+        copyModel(key,m){
+            this.editing=false;
+            this.form={model_id:key+'-copy',...m,model_id:key+'-copy'};
+            this.showModal=true;
+            this.$nextTick(()=>{ const el=this.$refs.firstInput; if(el){ el.focus(); el.select(); } });
+        },
 
         onSourceProviderChange(){
-            if(this.form.source_provider && !this.sourceModels[this.form.source_provider]){
-                // Auto-fetch if not loaded
-            }
+            // 切换渠道时自动拉取模型列表
+            if(this.form.source_provider && !this.sourceModels[this.form.source_provider]) this.fetchSourceModels();
         },
         onVisionProviderChange(){
-            if(this.form.vision_provider && !this.visionModels[this.form.vision_provider]){
-                // Auto-fetch if not loaded
-            }
+            if(this.form.vision_provider && !this.visionModels[this.form.vision_provider]) this.fetchVisionModels();
         },
 
         async fetchSourceModels(){
@@ -110,7 +279,6 @@ function modelManager() {
             }catch(e){ showToast('拉取失败: '+e.message,'error'); }
             this.sourceLoading=false;
         },
-
         async fetchVisionModels(){
             if(!this.form.vision_provider) return;
             this.visionLoading=true;
@@ -123,8 +291,28 @@ function modelManager() {
             this.visionLoading=false;
         },
 
-        async saveModel(){ const m=this.editing?'PUT':'POST'; const u=this.editing?`/api/admin/models/${this.form.model_id}`:'/api/admin/models'; const body={...this.form}; if(this.editing)delete body.model_id; await api(m,u,body); this.showModal=false; showToast('已保存'); location.reload(); },
-        async deleteModel(key){ if(!confirm(`确定删除模型"${key}"？`))return; await api('DELETE',`/api/admin/models/${key}`); showToast('已删除'); location.reload(); }
+        async saveModel(){
+            if(!this.form.model_id.trim()) return showToast('模型 ID 不能为空','error');
+            if(!this.form.source_provider) return showToast('请选择源渠道','error');
+            const m=this.editing?'PUT':'POST';
+            const u=this.editing?`/api/admin/models/${this.form.model_id}`:'/api/admin/models';
+            const body={...this.form};
+            if(this.editing) delete body.model_id;
+            try {
+                await api(m,u,body);
+                this.showModal=false;
+                showToast('模型已保存');
+                location.reload();
+            } catch(e) { showToast(e.message||'保存失败','error'); }
+        },
+        async deleteModel(key){
+            if(!(await gvConfirm(`确定删除增强模型「${key}」？此操作不可撤销。`))) return;
+            try {
+                await api('DELETE',`/api/admin/models/${key}`);
+                showToast('模型已删除');
+                location.reload();
+            } catch(e) { showToast(e.message,'error'); }
+        }
     }
 }
 </script>

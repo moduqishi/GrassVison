@@ -1,27 +1,78 @@
 {% extends "base.html" %}
 {% block title %}配置预览{% endblock %}
 {% block content %}
-<h1>📄 配置预览</h1>
 <div x-data="configPreview()">
-    <div class="form-actions" style="margin-bottom:12px">
-        <button class="btn btn-outline" @click="downloadConfig()">下载配置</button>
-        <button class="btn btn-outline" @click="reloadConfig()">重新加载</button>
+    <div class="page-head">
+        <div>
+            <h1>配置预览</h1>
+            <div class="sub">直接查看并编辑 <code class="inline">config.yaml</code>（保存前自动备份）。</div>
+        </div>
+        <div class="page-head-actions">
+            <button class="btn btn-outline" @click="downloadConfig()">
+                <svg class="icon"><use href="#i-download"/></svg>下载配置
+            </button>
+            <button class="btn btn-outline" @click="reloadConfig()">
+                <svg class="icon"><use href="#i-refresh"/></svg>重新加载
+            </button>
+            <button class="btn btn-primary" @click="saveYaml()" :disabled="saving">
+                <span class="spinner" x-show="saving" style="border-color:rgba(255,255,255,.35);border-top-color:#fff"></span>
+                <svg class="icon" x-show="!saving"><use href="#i-check"/></svg>
+                <span x-text="saving ? '保存中…' : '保存配置'"></span>
+            </button>
+        </div>
     </div>
-    <div>
-        <textarea class="input" x-model="yamlContent" rows="30" style="font-family:monospace;width:100%;white-space:pre"></textarea>
+
+    <div x-show="error" x-cloak class="card" style="border-color:#fecaca;background:var(--danger-soft);margin-bottom:16px">
+        <div class="card-body" style="display:flex;align-items:flex-start;gap:10px;color:var(--danger-text);font-size:13px">
+            <svg class="icon" style="margin-top:2px"><use href="#i-alert"/></svg>
+            <div class="wrap-break" x-text="error"></div>
+        </div>
     </div>
-    <div class="form-actions" style="margin-top:12px">
-        <button class="btn btn-primary" @click="saveYaml()">保存配置</button>
+
+    <div class="card">
+        <div class="card-head">
+            <svg class="icon"><use href="#i-file"/></svg>
+            <div>
+                <div class="card-title">config.yaml</div>
+                <div class="card-title-sub" x-text="yamlContent.split('\n').length + ' 行'"></div>
+            </div>
+        </div>
+        <div style="padding:16px">
+            <textarea class="yaml-editor" x-model="yamlContent" spellcheck="false" placeholder="# 在此编辑配置…"></textarea>
+        </div>
+        <div class="card-foot">
+            <span class="hint" style="margin-right:auto">⚠ 手动编辑时请确保 YAML 语法正确；保存失败不会破坏原配置。</span>
+            <button class="btn btn-primary" @click="saveYaml()" :disabled="saving">
+                <svg class="icon"><use href="#i-check"/></svg>保存配置
+            </button>
+        </div>
     </div>
-    <p x-show="error" class="error-msg" x-text="error"></p>
 </div>
+
 <script>
 function configPreview() {
     return {
-        yamlContent: {{ config_yaml | tojson }}, error:'',
+        yamlContent: {{ config_yaml | tojson }}, error:'', saving:false,
         downloadConfig(){ window.open('/api/admin/config/download'); },
-        async reloadConfig(){ await api('POST','/api/admin/reload'); showToast('配置已重新加载'); location.reload(); },
-        async saveYaml(){ try{ await api('PUT','/api/admin/config/yaml',{yaml:this.yamlContent}); showToast('配置已保存'); this.error=''; }catch(e){ this.error=e.message; showToast(e.message,'error'); } }
+        async reloadConfig(){
+            try {
+                await api('POST','/api/admin/reload');
+                showToast('配置已重新加载');
+                location.reload();
+            } catch(e) { showToast('加载失败: '+e.message,'error'); }
+        },
+        async saveYaml(){
+            if(this.saving) return;
+            this.saving=true; this.error='';
+            try{
+                await api('PUT','/api/admin/config/yaml',{yaml:this.yamlContent});
+                showToast('配置已保存');
+                setTimeout(()=>location.reload(), 600);
+            }catch(e){
+                this.error=e.message||'保存失败';
+                showToast(e.message||'保存失败','error');
+            } finally { this.saving=false; }
+        }
     }
 }
 </script>

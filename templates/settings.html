@@ -1,49 +1,212 @@
 {% extends "base.html" %}
 {% block title %}系统设置{% endblock %}
 {% block content %}
-<h1>⚙️ 系统设置</h1>
-<div x-data="settingsForm()">
-    <form @submit.prevent="saveSettings()">
-        <div class="card"><h3>服务</h3>
-            <div class="form-row"><div class="form-group"><label>监听地址</label><input class="input" x-model="form.server.host"><p class="hint">修改需重启生效</p></div>
-            <div class="form-group"><label>端口</label><input class="input" x-model.number="form.server.port" type="number"><p class="hint">修改需重启生效</p></div></div>
-            <div class="form-group"><label>访问密钥（可选）</label><input class="input" x-model="form.server.access_key" type="password"></div>
-            <div class="form-group"><label>请求超时 (秒)</label><input class="input" x-model.number="form.server.request_timeout" type="number"></div>
+<div x-data="settingsForm()" x-init="init()">
+    <div class="page-head">
+        <div>
+            <h1>系统设置</h1>
+            <div class="sub">服务、安全与图片处理参数。</div>
         </div>
-        <div class="card"><h3>管理界面</h3>
-            <div class="form-row"><div class="form-group"><label>用户名</label><input class="input" x-model="form.admin.username"></div>
-            <div class="form-group"><label>密码（留空不修改）</label><input class="input" x-model="form.admin.password" type="password"></div></div>
-            <div class="form-group"><label><input type="checkbox" x-model="form.admin.enabled"> 启用管理界面</label></div>
+        <div class="page-head-actions">
+            <button class="btn btn-primary" @click="saveSettings()" :disabled="saving">
+                <span class="spinner" x-show="saving" style="border-color:rgba(255,255,255,.35);border-top-color:#fff"></span>
+                <svg class="icon" x-show="!saving"><use href="#i-check"/></svg>
+                <span x-text="saving ? '保存中…' : '保存设置'"></span>
+            </button>
         </div>
-        <div class="card"><h3>图片限制</h3>
-            <div class="form-row">
-                <div class="form-group"><label>最大图片数</label><input class="input" x-model.number="form.image.max_images" type="number"></div>
-                <div class="form-group"><label>单张最大 (MB)</label><input class="input" x-model.number="form.image.max_image_size_mb" type="number"></div>
-                <div class="form-group"><label>总计最大 (MB)</label><input class="input" x-model.number="form.image.max_total_size_mb" type="number"></div>
+    </div>
+
+    <div x-show="needsRestart" x-cloak class="card" style="border-color:#fcd34d;background:var(--warning-soft);margin-bottom:18px">
+        <div class="card-body" style="display:flex;align-items:center;gap:10px;color:var(--warning-text);font-size:13.5px;font-weight:600">
+            <svg class="icon"><use href="#i-alert"/></svg>
+            监听地址或端口已修改，需要重启服务才能生效。
+        </div>
+    </div>
+
+    <!-- 服务 -->
+    <div class="card">
+        <div class="card-head">
+            <svg class="icon"><use href="#i-server"/></svg>
+            <div>
+                <div class="card-title">服务</div>
+                <div class="card-title-sub">HTTP 服务与访问控制</div>
             </div>
-            <div class="form-row">
-                <div class="form-group"><label>最大宽度</label><input class="input" x-model.number="form.image.max_width" type="number"></div>
-                <div class="form-group"><label>最大高度</label><input class="input" x-model.number="form.image.max_height" type="number"></div>
+        </div>
+        <div class="card-body">
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>监听地址</label>
+                    <input class="input" x-model="form.server.host" placeholder="127.0.0.1">
+                    <p class="hint">修改需重启生效</p>
+                </div>
+                <div class="form-group">
+                    <label>端口</label>
+                    <input class="input" x-model.number="form.server.port" type="number" placeholder="8042">
+                    <p class="hint">修改需重启生效</p>
+                </div>
+                <div class="form-group">
+                    <label>请求超时（秒）</label>
+                    <input class="input" x-model.number="form.server.request_timeout" type="number" min="1">
+                </div>
             </div>
-            <div class="form-group"><label><input type="checkbox" x-model="form.image.allow_private_network"> 允许访问局域网图片</label></div>
-        </div>
-        <div class="card"><h3>图片缓存</h3>
-            <div class="form-group"><label><input type="checkbox" x-model="form.image.vision_cache.enabled"> 启用缓存</label></div>
-            <div class="form-row">
-                <div class="form-group"><label>缓存有效期 (秒)</label><input class="input" x-model.number="form.image.vision_cache.ttl_seconds" type="number"><p class="hint">默认 3600</p></div>
-                <div class="form-group"><label>最大条目</label><input class="input" x-model.number="form.image.vision_cache.max_entries" type="number"><p class="hint">默认 200</p></div>
+            <div class="form-group" style="margin-bottom:0">
+                <label>访问密钥（可选）</label>
+                <input class="input" x-model="form.server.access_key" type="password" autocomplete="new-password" placeholder="留空则不校验客户端密钥">
+                <p class="hint">设置后，客户端调用 /v1/* 需携带 <code class="inline">Authorization: Bearer &lt;key&gt;</code></p>
             </div>
-            <div class="form-group"><label>历史图片缺失策略</label><select class="input" x-model="form.image.historical_cache_miss"><option value="analyze">重新分析</option><option value="drop">移除图片</option><option value="error">返回错误</option></select></div>
         </div>
-        <div class="card"><h3>日志</h3>
-            <div class="form-group"><label>日志级别</label><select class="input" x-model="form.logging.level"><option value="DEBUG">DEBUG</option><option value="INFO">INFO</option><option value="WARNING">WARNING</option><option value="ERROR">ERROR</option></select></div>
-            <div class="form-group"><label>日志文件</label><input class="input" x-model="form.logging.file"></div>
-            <div class="form-group"><label><input type="checkbox" x-model="form.logging.save_to_file"> 保存到文件</label></div>
+    </div>
+
+    <!-- 管理界面 -->
+    <div class="card">
+        <div class="card-head">
+            <svg class="icon"><use href="#i-shield"/></svg>
+            <div>
+                <div class="card-title">管理界面</div>
+                <div class="card-title-sub">后台登录凭据</div>
+            </div>
         </div>
-        <div class="form-actions"><button type="submit" class="btn btn-primary">保存设置</button></div>
-        <p class="hint" x-show="needsRestart" style="color:#e74c3c">⚠️ 监听地址或端口已修改，需要重启服务生效</p>
-    </form>
+        <div class="card-body">
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>用户名</label>
+                    <input class="input" x-model="form.admin.username">
+                </div>
+                <div class="form-group">
+                    <label>密码 <span class="text-muted" style="font-weight:400">（留空不修改）</span></label>
+                    <input class="input" x-model="form.admin.password" type="password" autocomplete="new-password" placeholder="••••••••">
+                </div>
+            </div>
+            <div class="switch-row" style="margin-bottom:0">
+                <div>
+                    <div class="switch-label">启用管理界面</div>
+                    <div class="switch-desc">关闭后 /admin 无需登录即可访问（不推荐）</div>
+                </div>
+                <label class="switch"><input type="checkbox" x-model="form.admin.enabled"><span class="track"></span></label>
+            </div>
+        </div>
+    </div>
+
+    <!-- 图片限制 -->
+    <div class="card">
+        <div class="card-head">
+            <svg class="icon"><use href="#i-image"/></svg>
+            <div>
+                <div class="card-title">图片限制</div>
+                <div class="card-title-sub">图片数量、大小与尺寸上限</div>
+            </div>
+        </div>
+        <div class="card-body">
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>最大图片数</label>
+                    <input class="input" x-model.number="form.image.max_images" type="number" min="1">
+                </div>
+                <div class="form-group">
+                    <label>单张最大（MB）</label>
+                    <input class="input" x-model.number="form.image.max_image_size_mb" type="number" min="1">
+                </div>
+                <div class="form-group">
+                    <label>总计最大（MB）</label>
+                    <input class="input" x-model.number="form.image.max_total_size_mb" type="number" min="1">
+                </div>
+            </div>
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>最大宽度（px）</label>
+                    <input class="input" x-model.number="form.image.max_width" type="number" min="16">
+                </div>
+                <div class="form-group">
+                    <label>最大高度（px）</label>
+                    <input class="input" x-model.number="form.image.max_height" type="number" min="16">
+                </div>
+            </div>
+            <div class="switch-row" style="margin-bottom:0">
+                <div>
+                    <div class="switch-label">允许访问局域网图片</div>
+                    <div class="switch-desc">允许下载内网 / 127.0.0.1 地址的图片 URL</div>
+                </div>
+                <label class="switch"><input type="checkbox" x-model="form.image.allow_private_network"><span class="track"></span></label>
+            </div>
+        </div>
+    </div>
+
+    <!-- 图片缓存 -->
+    <div class="card">
+        <div class="card-head">
+            <svg class="icon"><use href="#i-box"/></svg>
+            <div>
+                <div class="card-title">图片缓存</div>
+                <div class="card-title-sub">缓存视觉分析结果，节省重复调用</div>
+            </div>
+        </div>
+        <div class="card-body">
+            <div class="switch-row">
+                <div>
+                    <div class="switch-label">启用缓存</div>
+                    <div class="switch-desc">相同图片 + 问题命中缓存时直接复用结果</div>
+                </div>
+                <label class="switch"><input type="checkbox" x-model="form.image.vision_cache.enabled"><span class="track"></span></label>
+            </div>
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>缓存有效期（秒）</label>
+                    <input class="input" x-model.number="form.image.vision_cache.ttl_seconds" type="number" min="1">
+                    <p class="hint">默认 3600</p>
+                </div>
+                <div class="form-group">
+                    <label>最大条目</label>
+                    <input class="input" x-model.number="form.image.vision_cache.max_entries" type="number" min="1">
+                    <p class="hint">默认 200</p>
+                </div>
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+                <label>历史图片缺失策略</label>
+                <select class="input" x-model="form.image.historical_cache_miss">
+                    <option value="analyze">重新分析</option>
+                    <option value="drop">移除图片</option>
+                    <option value="error">返回错误</option>
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <!-- 日志 -->
+    <div class="card">
+        <div class="card-head">
+            <svg class="icon"><use href="#i-list"/></svg>
+            <div>
+                <div class="card-title">日志</div>
+                <div class="card-title-sub">记录级别与存储</div>
+            </div>
+        </div>
+        <div class="card-body">
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>日志级别</label>
+                    <select class="input" x-model="form.logging.level">
+                        <option value="DEBUG">DEBUG</option>
+                        <option value="INFO">INFO</option>
+                        <option value="WARNING">WARNING</option>
+                        <option value="ERROR">ERROR</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>日志文件</label>
+                    <input class="input" x-model="form.logging.file" placeholder="logs/grassvision.log">
+                </div>
+            </div>
+            <div class="switch-row" style="margin-bottom:0">
+                <div>
+                    <div class="switch-label">保存到文件</div>
+                    <div class="switch-desc">将日志同时写入文件，便于在「运行日志」中查看</div>
+                </div>
+                <label class="switch"><input type="checkbox" x-model="form.logging.save_to_file"><span class="track"></span></label>
+            </div>
+        </div>
+    </div>
 </div>
+
 <script>
 function settingsForm() {
     return {
@@ -54,26 +217,27 @@ function settingsForm() {
             logging: {{ config.logging.model_dump() | tojson }}
         },
         needsRestart: false,
+        saving: false,
         init() {
             // Clear admin password for security
             this.form.admin.password = '';
-            // Restore needsRestart flag across reload (set by saveSettings)
             if (sessionStorage.getItem('gv_needs_restart') === '1') {
                 this.needsRestart = true;
                 sessionStorage.removeItem('gv_needs_restart');
             }
         },
         async saveSettings() {
+            if(this.saving) return;
+            this.saving = true;
             try {
                 const d = await api('PUT', '/api/admin/settings', this.form);
-                showToast('已保存');
-                if (d.needs_restart) {
-                    sessionStorage.setItem('gv_needs_restart', '1');
-                }
+                showToast('设置已保存');
+                if (d.needs_restart) sessionStorage.setItem('gv_needs_restart', '1');
                 setTimeout(() => location.reload(), 600);
             } catch(e) {
                 showToast(e.message || '保存失败', 'error');
-                // 失败不刷新，保留输入
+            } finally {
+                this.saving = false;
             }
         }
     }
