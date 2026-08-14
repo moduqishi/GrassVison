@@ -1,6 +1,7 @@
 """GrassVision — FastAPI application entry point."""
 from __future__ import annotations
 
+import json
 import logging
 import sys
 import time
@@ -8,7 +9,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
@@ -22,6 +23,8 @@ from app.proxy import handle_chat_completion
 from app.schemas import ChatCompletionRequest, ModelInfo
 from app.stats import get_stats, flush_stats
 from app.admin import router as admin_router
+from app.protocols.anthropic import parse_messages_request, build_messages_response, iter_anthropic_stream
+from app.protocols.responses import parse_responses_request, build_responses_response, iter_responses_stream
 
 
 def setup_logging():
@@ -131,6 +134,99 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
         raise
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
+        raise HTTPException(500, f"Internal error: {str(e)}")
+
+
+@app.post("/v1/messages")
+async def anthropic_messages(raw_request: Request):
+    """Anthropic Messages API 兼容端点（Claude Code / Claude 客户端）。
+
+    请求转换为内部 OpenAI 格式，复用核心管线（视觉分析、服务端无感重看、
+    像素注入、缓存）；响应转回 Anthropic 格式（含流式 events）。
+    """
+    logger = logging.getLogger("grassvision")
+    start = time.time()
+
+    cfg = get_config()
+    if cfg.server.access_key:
+        auth_header = raw_request.headers.get("Authorization", "")
+        key = auth_header.replace("Bearer ", "")
+        if key != cfg.server.access_key:
+            raise HTTPException(401, "Invalid access key")
+
+    try:
+        body = await raw_request.json()
+        request = parse_messages_request(body)
+        model_id = request.model
+        # 校验模型存在
+        from app.proxy import _find_model
+        _find_model(model_id)
+
+        response = await handle_chat_completion(request, raw_request)
+        elapsed = time.time() - start
+        logger.info(f"anthropic model={model_id} stream={request.stream} elapsed={elapsed:.2f}s")
+
+        if request.stream:
+            # 内部流式响应（OpenAI SSE）→ Anthropic events
+            generator = iter_anthropic_stream(raw_request, model_id, response.body_iterator)
+            return StreamingResponse(
+                generator,
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+            )
+        # 非流式：OpenAI JSON → Anthropic message
+        data = json.loads(response.body)
+        out = build_messages_response(data, model_id)
+        return JSONResponse(content=out)
+    except GrassVisionError:
+        raise
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Anthropic endpoint error: {e}")
+        raise HTTPException(500, f"Internal error: {str(e)}")
+
+
+@app.post("/v1/responses")
+async def responses_api(raw_request: Request):
+    """OpenAI Responses API 兼容端点（Codex / 新版 OpenAI 客户端）。"""
+    logger = logging.getLogger("grassvision")
+    start = time.time()
+
+    cfg = get_config()
+    if cfg.server.access_key:
+        auth_header = raw_request.headers.get("Authorization", "")
+        key = auth_header.replace("Bearer ", "")
+        if key != cfg.server.access_key:
+            raise HTTPException(401, "Invalid access key")
+
+    try:
+        body = await raw_request.json()
+        request = parse_responses_request(body)
+        model_id = request.model
+        from app.proxy import _find_model
+        _find_model(model_id)
+
+        response = await handle_chat_completion(request, raw_request)
+        elapsed = time.time() - start
+        logger.info(f"responses model={model_id} stream={request.stream} elapsed={elapsed:.2f}s")
+
+        if request.stream:
+            generator = iter_responses_stream(model_id, response.body_iterator)
+            return StreamingResponse(
+                generator,
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+            )
+        data = json.loads(response.body)
+        out = build_responses_response(data, model_id)
+        return JSONResponse(content=out)
+    except GrassVisionError:
+        raise
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Responses endpoint error: {e}")
         raise HTTPException(500, f"Internal error: {str(e)}")
 
 

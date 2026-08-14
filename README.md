@@ -65,6 +65,7 @@
 | 🗂️ **缓存磁盘持久化** | 重启不丢分析结果，跨重启追问仍命中 |
 | 🔌 **连接池复用** | 视觉/源/下载共用进程级连接池，多次调用不重复握手 |
 | 📊 **用量透传** | 响应 `usage` 增加 `vision_*` 字段，成本透明 |
+| 🔌 **三协议支持** | OpenAI Chat Completions `/v1/chat/completions` + Anthropic Messages `/v1/messages`（Claude Code/Claude 客户端）+ OpenAI Responses `/v1/responses`（Codex），同一核心管线，服务端无感重看/像素注入全协议生效 |
 
 ---
 
