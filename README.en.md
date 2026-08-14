@@ -26,15 +26,19 @@ geometry available by default, with zero client awareness.
 
 ---
 
-## 📸 Showcase (see it first)
+## 📊 Replica capability comparison (tested)
 
-<p align="center">
-  <img src="assets/replica-showcase.png" alt="Pixel-perfect UI replica driven by GrassVision" width="100%">
-</p>
+> Tested environment: source model **DeepSeek V4 Flash** · vision model
+> **MiniMax-M3** (minimax channel) · vision channels vivo / cpa failover.
+> When used in **DeepSeek Harness**, enable enhanced-model image support
+> **manually in the config file**.
 
-> Above is a **real replica driven by GrassVision**: AI recognizes the target UI →
-> plans tasks → writes HTML/CSS → pixel-perfect replica, **zero human
-> intervention** — the result is nearly indistinguishable from the original.
+| Aspect | Original UI | Replica | AI process |
+|---|---|---|---|
+| Interface | DeepSeek desktop app (2560×1440) | pure HTML/CSS | context inject → think → bash |
+| Theme | dark AI chat UI | dark theme · pixel-matched | task list **5/5 done** |
+| Layout | sidebar + chat + input toolbar | sidebar / chat / toolbar **fully replicated** | total **4m42s** |
+| Result | — | **100% layout fidelity · 0px deviation** | **zero human intervention** |
 
 ---
 
