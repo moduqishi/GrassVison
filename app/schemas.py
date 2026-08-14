@@ -45,14 +45,6 @@ class EnhancedModelConfig(BaseModel):
     cache_prompt: str | None = None
     # 视觉渠道故障转移链：主渠道失败时按序尝试这些渠道（渠道 key 列表）
     vision_provider_failover: list[str] = Field(default_factory=list)
-    # 定位-放大-再读：用户问题针对具体 UI 元素时，先定位坐标框，再裁剪放大做二次精读
-    grounding_zoom: bool = False
-    # 协议化服务端重看：注入 grassvision_view_image 工具，源模型描述不足时自主调用，
-    # GrassVision 在服务端用请求内缓存的图片字节重新分析（无需用户重发），客户端无感知
-    vision_reexamine: bool = False
-    # 结构化证据输出：视觉模型返回 JSON 证据（摘要/全文/版面/实体/不确定项），
-    # 解析校验后格式化为易引用文本注入（不确定项单独标注）
-    structured_evidence: bool = False
 
 
 class ServerConfig(BaseModel):
@@ -108,6 +100,13 @@ class ImageConfig(BaseModel):
     vision_concurrency: int = 4
     # 长截图切片 OCR：高宽比≥3 且高度≥1800px 的截图自动分段分析后合并
     long_screenshot_ocr: bool = False
+    # 定位-放大-再读：问题针对具体 UI 元素时，先定位坐标框，再本地裁剪放大做二次精读
+    grounding_zoom: bool = False
+    # 协议化服务端重看：注入 view_image 工具，源模型描述不足时自主调用，
+    # 服务端用请求内图片重新分析（无需用户重发、客户端无感知，含跨轮次历史图重看）
+    vision_reexamine: bool = False
+    # 结构化证据输出：视觉模型返回 JSON 证据，解析校验后格式化注入（不确定项单独标注）
+    structured_evidence: bool = False
     vision_cache: VisionCacheConfig = Field(default_factory=VisionCacheConfig)
 
 

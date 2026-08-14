@@ -89,6 +89,24 @@ def load_config(reload: bool = False) -> AppConfig:
                     f"field ignored"
                 )
 
+    # Migrate legacy model-level vision switches to image-level (system settings):
+    # grounding_zoom / vision_reexamine / structured_evidence 从模型配置迁移到 image 段。
+    models_raw = raw.get("models")
+    if isinstance(models_raw, dict):
+        image_raw = raw.setdefault("image", {})
+        for key, model in models_raw.items():
+            if not isinstance(model, dict):
+                continue
+            for field in ("grounding_zoom", "vision_reexamine", "structured_evidence"):
+                if field in model:
+                    value = model.pop(field)
+                    if value is True and not image_raw.get(field):
+                        image_raw[field] = True
+                        logger.warning(
+                            f"Model '{key}': migrated {field}=true to image.{field} "
+                            f"(global system setting); please update config.yaml manually"
+                        )
+
     _config = AppConfig(**raw)
     _config_loaded_at = datetime.now()
     _config_error = None

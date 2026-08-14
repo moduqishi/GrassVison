@@ -49,9 +49,9 @@
 | 能力 | 说明 |
 |---|---|
 | 🧠 **流式真实思考链** | 视觉推理 + 源模型思考链单流透传，首帧即真实内容 |
-| 🔁 **协议化服务端重看** | `vision_reexamine`：注入 `view_image` 工具，源模型描述不足时自主调用，**服务端用请求内图片重新分析**（无需用户重发、客户端无感知，非流式与流式均支持） |
-| 🎯 **定位-放大-再读** | `grounding_zoom`：坐标框 + 本地裁剪放大二次精读 |
-| 📋 **结构化证据** | `structured_evidence`：摘要/全文/版面/实体 JSON，**不确定项单独标注**防幻觉 |
+| 🔁 **协议化服务端重看** | `image.vision_reexamine`（系统设置）：注入 `view_image` 工具，源模型描述不足时自主调用，**服务端用请求内图片重新分析**（含跨轮次历史图，无需用户重发、客户端无感知） |
+| 🎯 **定位-放大-再读** | `image.grounding_zoom`（系统设置）：坐标框 + 本地裁剪放大二次精读 |
+| 📋 **结构化证据** | `image.structured_evidence`（系统设置）：摘要/全文/版面/实体 JSON，**不确定项单独标注**防幻觉 |
 | 🔍 **问题感知缓存** | `question_aware_cache`：用户问题直达视觉模型，缓存键随问题变化 |
 | 💬 **多轮追问** | `reuse_historical_cache`：历史图片缓存描述原地注入，追问不丢上下文 |
 | 🖼️ **多图联合对比** | `multi_image_mode: auto` 检测对比意图一次调用多图，`combined` 总是联合 |
@@ -125,12 +125,14 @@ models:
   deepseek-v4-flash-vision:
     vision_provider: minimax          # 主视觉渠道
     vision_provider_failover: [cpa]   # 故障转移
-    grounding_zoom: true              # 定位-放大-再读
-    structured_evidence: true         # 结构化证据
-    vision_reexamine: true            # 协议化服务端重看（源模型自主再看图）
 image:
   multi_image_mode: auto              # 对比意图自动联合分析
   stream_vision_thinking: true        # 流式视觉思考（与重看融合，可同时开启）
+  vision_channel_note: true           # 通道说明（引导按需重看）
+  vision_reexamine: true              # 协议化服务端重看（源模型自主再看图）
+  grounding_zoom: true                # 定位-放大-再读
+  structured_evidence: true           # 结构化证据
+  reuse_historical_cache: true        # 历史图描述注入（跨轮次可重看）
 ```
 
 > 💡 **融合流式**：`stream_vision_thinking` 与 `vision_reexamine` 可同时开启——客户端会看到

@@ -607,7 +607,7 @@ async def handle_chat_completion(
             else:
                 stripped = inject_image_descriptions(messages_raw, {})
         # 无当前图片但开启重看：注入通道说明（引导模型怀疑描述、主动重看历史图）
-        if model.vision_enabled and model.vision_reexamine and cfg.image.vision_channel_note:
+        if model.vision_enabled and cfg.image.vision_reexamine and cfg.image.vision_channel_note:
             stripped = _inject_channel_note(stripped)
         body = _build_source_body(request, model, stripped)
         if request.stream:
@@ -618,7 +618,7 @@ async def handle_chat_completion(
                     vision_used=False, vision_success=False,
                     source_tokens=usage,
                 )
-            if model.vision_enabled and model.vision_reexamine:
+            if model.vision_enabled and cfg.image.vision_reexamine:
                 # 无图流式：注入工具，允许源模型重看历史图片（跨轮次无感重看）
                 body = _inject_view_image_tool(body)
                 return StreamingResponse(
@@ -643,7 +643,7 @@ async def handle_chat_completion(
             )
         else:
             noimg_vision_usage: dict | None = None
-            if model.vision_enabled and model.vision_reexamine:
+            if model.vision_enabled and cfg.image.vision_reexamine:
                 # 无图非流式：注入工具，源模型可重看历史图片（跨轮次无感重看）
                 body = _inject_view_image_tool(body)
                 resp, source_usage, reexam_vision = await _forward_with_reexamine(
@@ -679,7 +679,7 @@ async def handle_chat_completion(
     # ── 2.5 融合流式：视觉思考（可选）+ 源模型流（含服务端重看）──
     # 统一入口：stream_vision_thinking 或 vision_reexamine 任一开启即走融合流，
     # 二者可自由组合（不再二选一）。
-    if request.stream and (cfg.image.stream_vision_thinking or model.vision_reexamine):
+    if request.stream and (cfg.image.stream_vision_thinking or cfg.image.vision_reexamine):
         return StreamingResponse(
             _combined_stream(
                 request=request,
@@ -776,7 +776,7 @@ async def handle_chat_completion(
         enhanced_messages = _inject_thinking_guidance(enhanced_messages)
     if cfg.image.vision_channel_note:
         enhanced_messages = _inject_channel_note(
-            enhanced_messages, with_tool=model.vision_reexamine)
+            enhanced_messages, with_tool=cfg.image.vision_reexamine)
 
     # ── 7. Assert no image_url blocks remain ────────────────────
     assert_no_image_url_blocks(enhanced_messages)
@@ -804,7 +804,7 @@ async def handle_chat_completion(
             extra_usage=_vision_usage_extra(vision_usage),
         )
     else:
-        if model.vision_reexamine:
+        if cfg.image.vision_reexamine:
             # 协议化服务端重看：注入工具 + 拦截 tool_call 在服务端执行（客户端无感知）
             body = _inject_view_image_tool(body)
             resp, source_usage, reexam_vision = await _forward_with_reexamine(
@@ -1023,7 +1023,7 @@ async def _combined_stream(
         enhanced_messages = _inject_thinking_guidance(enhanced_messages)
     if cfg.image.vision_channel_note:
         enhanced_messages = _inject_channel_note(
-            enhanced_messages, with_tool=model.vision_reexamine)
+            enhanced_messages, with_tool=cfg.image.vision_reexamine)
     assert_no_image_url_blocks(enhanced_messages)
 
     body = _build_source_body(request, model, enhanced_messages)
@@ -1037,7 +1037,7 @@ async def _combined_stream(
             source_tokens=usage,
         )
 
-    if model.vision_reexamine:
+    if cfg.image.vision_reexamine:
         # 融合版阶段 2：源模型流 + 服务端重看（工具轮吞掉、重看增量流式推送）
         body = _inject_view_image_tool(body)
         async for line in _stream_with_reexamine(

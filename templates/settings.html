@@ -206,13 +206,13 @@
         </div>
     </div>
 
-    <!-- 思考链 -->
+    <!-- 思考链与视觉增强 -->
     <div class="card">
         <div class="card-head">
             <svg class="icon"><use href="#i-zap"/></svg>
             <div>
-                <div class="card-title">思考链</div>
-                <div class="card-title-sub">图片分析与推理模型的思考链行为（对所有视觉增强模型生效）</div>
+                <div class="card-title">思考链与视觉增强</div>
+                <div class="card-title-sub">流式思考链、按需重看与证据输出（对所有视觉增强模型生效）</div>
             </div>
         </div>
         <div class="card-body">
@@ -237,12 +237,33 @@
                 </div>
                 <label class="switch"><input type="checkbox" x-model="form.image.thinking_guidance"><span class="track"></span></label>
             </div>
-            <div class="switch-row" style="margin-bottom:0">
+            <div class="switch-row">
                 <div>
                     <div class="switch-label">通道说明（按需重看）</div>
-                    <div class="switch-desc">告诉源模型"收到的是文字分析不是像素"，细节不足时主动引导用户重发图片触发带新意图的重新分析</div>
+                    <div class="switch-desc">告诉源模型"收到的是文字分析不是像素"，细节不足时引导重新分析（配合服务端重看）</div>
                 </div>
                 <label class="switch"><input type="checkbox" x-model="form.image.vision_channel_note"><span class="track"></span></label>
+            </div>
+            <div class="switch-row">
+                <div>
+                    <div class="switch-label">协议化服务端重看</div>
+                    <div class="switch-desc">注入 view_image 工具，源模型描述不足时自主调用，服务端用请求内图片重新分析（含跨轮次历史图，无需用户重发、客户端无感知）</div>
+                </div>
+                <label class="switch"><input type="checkbox" x-model="form.image.vision_reexamine"><span class="track"></span></label>
+            </div>
+            <div class="switch-row">
+                <div>
+                    <div class="switch-label">定位-放大-再读</div>
+                    <div class="switch-desc">问题针对具体 UI 元素（按钮/输入框/图标等）时，先定位坐标框，再本地裁剪放大做二次精读</div>
+                </div>
+                <label class="switch"><input type="checkbox" x-model="form.image.grounding_zoom"><span class="track"></span></label>
+            </div>
+            <div class="switch-row" style="margin-bottom:0">
+                <div>
+                    <div class="switch-label">结构化证据输出</div>
+                    <div class="switch-desc">视觉模型返回 JSON 证据（摘要/全文/版面/实体/不确定项），格式化后注入，不确定项单独标注防幻觉</div>
+                </div>
+                <label class="switch"><input type="checkbox" x-model="form.image.structured_evidence"><span class="track"></span></label>
             </div>
         </div>
     </div>

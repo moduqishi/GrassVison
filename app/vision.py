@@ -1055,7 +1055,7 @@ async def resolve_image_descriptions(
                     system_prompt=cache_prompt_text if is_cache_enabled else vision_prompt_text,
                     request_client=request_client,
                 )
-            if enhanced_text is None and getattr(model_config, "grounding_zoom", False) and user_question:
+            if enhanced_text is None and getattr(cfg.image, "grounding_zoom", False) and user_question:
                 enhanced_text = await _resolve_grounding_zoom(
                     raw_bytes=raw,
                     data_url=data_url,
@@ -1076,7 +1076,7 @@ async def resolve_image_descriptions(
     # ── Phase 3.5: 结构化证据格式化（structured_evidence，仅非流式）──
     # 把视觉模型的 JSON 证据转成【摘要】/【全文文字】/【版面结构】等易引用文本，
     # 不确定项单独标注，防止视觉幻觉被源模型当事实采信（参考 modlens 输出契约）。
-    if stream_queue is None and getattr(model_config, "structured_evidence", False):
+    if stream_queue is None and getattr(cfg.image, "structured_evidence", False):
         for img in images:
             pos = img.position
             if pos in descriptions:

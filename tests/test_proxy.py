@@ -642,8 +642,8 @@ class TestGroundingZoom:
         _clear_image_cache()
         cfg = get_config()
         model = cfg.models["openai-vision"]
-        old = model.grounding_zoom
-        model.grounding_zoom = True
+        old = cfg.image.grounding_zoom
+        cfg.image.grounding_zoom = True
         try:
             request = ChatCompletionRequest(
                 model="openai-vision",
@@ -670,7 +670,7 @@ class TestGroundingZoom:
             assert "蓝色" in joined
             assert "x1=100" in joined
         finally:
-            model.grounding_zoom = old
+            cfg.image.grounding_zoom = old
             _clear_image_cache()
 
     def test_no_grounding_without_element_intent(self):
@@ -683,8 +683,8 @@ class TestGroundingZoom:
         _clear_image_cache()
         cfg = get_config()
         model = cfg.models["openai-vision"]
-        old = model.grounding_zoom
-        model.grounding_zoom = True
+        old = cfg.image.grounding_zoom
+        cfg.image.grounding_zoom = True
         try:
             request = ChatCompletionRequest(
                 model="openai-vision",
@@ -702,7 +702,7 @@ class TestGroundingZoom:
                 asyncio.run(handle_chat_completion(request, _RawReq()))
             assert len(vision.post_calls) == 1, "无元素意图不应触发 grounding 二次调用"
         finally:
-            model.grounding_zoom = old
+            cfg.image.grounding_zoom = old
             _clear_image_cache()
 
 
@@ -844,8 +844,8 @@ class TestStructuredEvidence:
         _clear_image_cache()
         cfg = get_config()
         model = cfg.models["openai-vision"]
-        old = model.structured_evidence
-        model.structured_evidence = True
+        old = cfg.image.structured_evidence
+        cfg.image.structured_evidence = True
         try:
             request = ChatCompletionRequest(
                 model="openai-vision",
@@ -871,7 +871,7 @@ class TestStructuredEvidence:
             assert "【不确定项 ⚠️】" in joined
             assert "欢迎回来" in joined
         finally:
-            model.structured_evidence = old
+            cfg.image.structured_evidence = old
             _clear_image_cache()
 
 
@@ -1090,8 +1090,8 @@ class TestReexamineTool:
         _clear_image_cache()
         cfg = get_config()
         model = cfg.models["openai-vision"]
-        old = model.vision_reexamine
-        model.vision_reexamine = True
+        old = cfg.image.vision_reexamine
+        cfg.image.vision_reexamine = True
         try:
             request = ChatCompletionRequest(
                 model="openai-vision",
@@ -1120,7 +1120,7 @@ class TestReexamineTool:
             assert tool_msgs[0]["tool_call_id"] == "call_1"
             assert len(vision.post_calls) == 2, "首次分析 + 重看各 1 次视觉调用"
         finally:
-            model.vision_reexamine = old
+            cfg.image.vision_reexamine = old
             _clear_image_cache()
 
     def test_no_tool_injected_when_disabled(self):
@@ -1129,8 +1129,8 @@ class TestReexamineTool:
         _clear_image_cache()
         cfg = get_config()
         model = cfg.models["openai-vision"]
-        old = model.vision_reexamine
-        model.vision_reexamine = False
+        old = cfg.image.vision_reexamine
+        cfg.image.vision_reexamine = False
         try:
             request = ChatCompletionRequest(
                 model="openai-vision",
@@ -1150,7 +1150,7 @@ class TestReexamineTool:
             names = [t.get("function", {}).get("name") for t in tools]
             assert "grassvision_view_image" not in names, "关闭时不应注入工具"
         finally:
-            model.vision_reexamine = old
+            cfg.image.vision_reexamine = old
             _clear_image_cache()
 
 
@@ -1189,9 +1189,9 @@ class TestStreamReexamine:
         _clear_image_cache()
         cfg = get_config()
         model = cfg.models["openai-vision"]
-        old_r = model.vision_reexamine
+        old_r = cfg.image.vision_reexamine
         old_s = cfg.image.stream_vision_thinking
-        model.vision_reexamine = True
+        cfg.image.vision_reexamine = True
         cfg.image.stream_vision_thinking = False
         try:
             request = ChatCompletionRequest(
@@ -1225,7 +1225,7 @@ class TestStreamReexamine:
             assert len(tool_msgs) == 1, "第二轮应携带工具结果"
             assert len(vision.post_calls) == 2, "首次分析 + 重看各 1 次"
         finally:
-            model.vision_reexamine = old_r
+            cfg.image.vision_reexamine = old_r
             cfg.image.stream_vision_thinking = old_s
             _clear_image_cache()
 
@@ -1257,10 +1257,10 @@ class TestFusedStream:
         _clear_image_cache()
         cfg = get_config()
         model = cfg.models["openai-vision"]
-        old_r = model.vision_reexamine
+        old_r = cfg.image.vision_reexamine
         old_s = cfg.image.stream_vision_thinking
         old_p = cfg.image.vision_stream_prelude
-        model.vision_reexamine = True
+        cfg.image.vision_reexamine = True
         cfg.image.stream_vision_thinking = True
         cfg.image.vision_stream_prelude = False
         try:
@@ -1296,7 +1296,7 @@ class TestFusedStream:
             assert "最终回答" in all_text
             assert source.calls == 2
         finally:
-            model.vision_reexamine = old_r
+            cfg.image.vision_reexamine = old_r
             cfg.image.stream_vision_thinking = old_s
             cfg.image.vision_stream_prelude = old_p
             _clear_image_cache()
@@ -1311,8 +1311,8 @@ class TestCrossTurnReexamine:
         _clear_image_cache()
         cfg = get_config()
         model = cfg.models["openai-vision"]
-        old = model.vision_reexamine
-        model.vision_reexamine = True
+        old = cfg.image.vision_reexamine
+        cfg.image.vision_reexamine = True
         try:
             # 第二轮：历史有图（被剥离），当前轮纯文字追问
             request = ChatCompletionRequest(
@@ -1337,7 +1337,7 @@ class TestCrossTurnReexamine:
             names = [t.get("function", {}).get("name") for t in tools]
             assert "grassvision_view_image" in names, "无当前图片时也应注入重看工具（历史图可重看）"
         finally:
-            model.vision_reexamine = old
+            cfg.image.vision_reexamine = old
             _clear_image_cache()
 
 
@@ -1350,8 +1350,8 @@ class TestUsageAggregation:
         _clear_image_cache()
         cfg = get_config()
         model = cfg.models["openai-vision"]
-        old = model.vision_reexamine
-        model.vision_reexamine = True
+        old = cfg.image.vision_reexamine
+        cfg.image.vision_reexamine = True
         try:
             # 源客户端：第一轮 tool_call（usage 5），第二轮回答（usage 10）
             class _AggSource:
@@ -1390,7 +1390,7 @@ class TestUsageAggregation:
             assert agg_source.get("total_tokens") == 25
             assert source.calls == 2
         finally:
-            model.vision_reexamine = old
+            cfg.image.vision_reexamine = old
             _clear_image_cache()
 
 
