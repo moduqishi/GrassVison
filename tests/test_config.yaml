@@ -1,0 +1,78 @@
+server:
+  host: 127.0.0.1
+  port: 8042
+  access_key: ''
+  request_timeout: 180
+admin:
+  enabled: true
+  username: admin
+  password: admin123
+source_providers:
+  openai:
+    name: openai
+    enabled: true
+    base_url: https://api.openai.com/v1
+    api_key: sk-your-openai-api-key
+    timeout: 120
+    headers: {}
+vision_providers:
+  openai:
+    name: openai
+    enabled: true
+    base_url: https://api.openai.com/v1
+    api_key: sk-your-openai-api-key
+    model: ''
+    timeout: 120
+    max_images: 5
+    max_image_size_mb: 10
+    max_tokens: 4096
+    image_detail: ''
+    extra_params:
+      enable_thinking: false
+    headers: {}
+models:
+  openai-vision:
+    name: openai-vision
+    enabled: true
+    source_provider: openai
+    source_model: gpt-4o-mini
+    vision_enabled: true
+    vision_provider: openai
+    vision_model: gpt-4o-mini
+    vision_prompt: prompts/default.txt
+    vision_failure_mode: error
+    replace_response_model: true
+    cache_prompt: null
+    vision_provider_failover: []
+    grounding_zoom: false
+    structured_evidence: false
+image:
+  max_images: 5
+  max_image_size_mb: 10
+  max_total_size_mb: 30
+  max_width: 4096
+  max_height: 4096
+  download_timeout: 20
+  allow_private_network: false
+  multi_image_mode: independent
+  analysis_scope: latest_user_message
+  historical_cache_miss: drop
+  comparison_strategy: source_model
+  thinking_guidance: false
+  stream_vision_thinking: false
+  vision_stream_prelude: false
+  question_aware_cache: false
+  reuse_historical_cache: false
+  vision_concurrency: 4
+  long_screenshot_ocr: false
+  vision_cache:
+    enabled: true
+    ttl_seconds: 3600
+    max_entries: 200
+    default_prompt: prompts/cache.txt
+logging:
+  level: INFO
+  save_to_file: true
+  file: logs/grassvision.log
+  log_request_body: false
+  log_vision_result: false

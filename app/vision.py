@@ -97,6 +97,18 @@ _GROUNDING_BOX_RE = re.compile(
     re.IGNORECASE,
 )
 
+_THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
+
+
+def _strip_think_blocks(text: str) -> str:
+    """剥离视觉模型内容中的 <think>…</think> 思考块（如 MiniMax 非流式返回）。
+
+    思考过程不应作为"图片描述"注入给源模型，且其中的近似坐标可能干扰 grounding 解析。
+    """
+    if not text:
+        return ""
+    return _THINK_BLOCK_RE.sub("", text).strip()
+
 LONG_SCREENSHOT_MIN_RATIO = 3.0   # 高/宽 达到该比例视为长截图
 LONG_SCREENSHOT_MIN_HEIGHT = 1800  # 且高度至少这么多像素
 SLICE_BAND_HEIGHT = 1000           # 每段高度
@@ -454,7 +466,7 @@ async def _call_vision_model(
         if resp.status_code != 200:
             raise VisionAnalysisError(f"Vision model returned {resp.status_code}: {resp.text[:500]}")
         data = resp.json()
-        result_text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        result_text = _strip_think_blocks(data.get("choices", [{}])[0].get("message", {}).get("content", ""))
         elapsed = time.time() - start
         return {
             "result": result_text,
@@ -561,7 +573,7 @@ async def _call_vision_model_stream(
                 return await _stream_fallback()
             elapsed = time.time() - start
             return {
-                "result": "".join(result_parts),
+                "result": _strip_think_blocks("".join(result_parts)),
                 "model": model,
                 "elapsed": elapsed,
                 "token_usage": token_usage,
