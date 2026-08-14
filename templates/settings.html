@@ -103,6 +103,15 @@
                     <input class="input" x-model.number="form.image.max_images" type="number" min="1">
                 </div>
                 <div class="form-group">
+                    <label>多图策略</label>
+                    <select class="input" x-model="form.image.multi_image_mode">
+                        <option value="independent">逐图独立分析</option>
+                        <option value="auto">对比意图时联合分析</option>
+                        <option value="combined">多图总是联合分析</option>
+                    </select>
+                    <p class="hint">联合分析 = 一次调用多图（可对比、省调用）</p>
+                </div>
+                <div class="form-group">
                     <label>单张最大（MB）</label>
                     <input class="input" x-model.number="form.image.max_image_size_mb" type="number" min="1">
                 </div>
@@ -168,6 +177,32 @@
                     <option value="error">返回错误</option>
                 </select>
             </div>
+            <div class="switch-row">
+                <div>
+                    <div class="switch-label">问题感知缓存</div>
+                    <div class="switch-desc">把用户问题直接传给视觉模型，缓存键随问题变化；关闭时缓存为通用描述（更省调用、针对性差）</div>
+                </div>
+                <label class="switch"><input type="checkbox" x-model="form.image.question_aware_cache"><span class="track"></span></label>
+            </div>
+            <div class="switch-row">
+                <div>
+                    <div class="switch-label">历史图片缓存复用</div>
+                    <div class="switch-desc">纯文字追问上一轮图片时，用缓存描述原地注入（不触发新分析），保住多轮追问上下文</div>
+                </div>
+                <label class="switch"><input type="checkbox" x-model="form.image.reuse_historical_cache"><span class="track"></span></label>
+            </div>
+            <div class="switch-row">
+                <div>
+                    <div class="switch-label">长截图切片 OCR</div>
+                    <div class="switch-desc">高宽比 ≥3 且高度 ≥1800px 的长截图自动分段分析后合并，避免单次调用降采样丢失文字</div>
+                </div>
+                <label class="switch"><input type="checkbox" x-model="form.image.long_screenshot_ocr"><span class="track"></span></label>
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+                <label>多图并发度</label>
+                <input class="input" x-model.number="form.image.vision_concurrency" type="number" min="1" max="16">
+                <p class="hint">多张图片同时分析的并发上限，默认 4</p>
+            </div>
         </div>
     </div>
 
@@ -187,6 +222,13 @@
                     <div class="switch-desc">发图后立即流式显示图像模型的思考/分析过程，再无缝衔接源模型的思考与回答（仅流式请求生效，不再静默等待）</div>
                 </div>
                 <label class="switch"><input type="checkbox" x-model="form.image.stream_vision_thinking"><span class="track"></span></label>
+            </div>
+            <div class="switch-row">
+                <div>
+                    <div class="switch-label">视觉阶段预提示</div>
+                    <div class="switch-desc">开启后在视觉模型首字前推送"正在处理图片"占位提示；默认关闭，首帧即真实思考链</div>
+                </div>
+                <label class="switch"><input type="checkbox" x-model="form.image.vision_stream_prelude"><span class="track"></span></label>
             </div>
             <div class="switch-row" style="margin-bottom:0">
                 <div>

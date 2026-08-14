@@ -96,6 +96,14 @@ def _extract_usage_from_chunk(data_str: str) -> dict | None:
         return None
 
 
+def _vision_usage_extra(vision_usage: dict | None) -> dict | None:
+    """把视觉模型 token 用量转成 vision_* 前缀字段，并入响应 usage（不覆盖标准字段）。"""
+    if not vision_usage:
+        return None
+    extra = {f"vision_{k}": v for k, v in vision_usage.items() if isinstance(v, (int, float))}
+    return extra or None
+
+
 def _openai_error_response(status: int, message: str, error_type: str = "grassvision_error") -> JSONResponse:
     return JSONResponse(
         status_code=status,
@@ -149,7 +157,24 @@ async def handle_chat_completion(
         # 无当前图片或视觉关闭 → 剥离所有图片块后直接转发
         stripped = messages_raw
         if all_images:
-            stripped = inject_image_descriptions(messages_raw, {})
+            if model.vision_enabled and cfg.image.reuse_historical_cache and not current_images:
+                # 历史图片缓存复用：纯文字追问上一轮图片时，用缓存描述原地注入
+                # （不触发新分析；未命中按 historical_cache_miss 处理）。
+                try:
+                    descriptions, _ = await resolve_image_descriptions(
+                        images=all_images,
+                        model_config=model,
+                        allow_analysis_positions=set(),
+                        historical_cache_miss=cfg.image.historical_cache_miss,
+                        request_client=getattr(raw_request, "_httpx_client", None),
+                        user_question=extract_user_question(messages_raw),
+                        failure_mode=model.vision_failure_mode,
+                    )
+                    stripped = inject_image_descriptions(messages_raw, descriptions)
+                except VisionAnalysisError:
+                    stripped = inject_image_descriptions(messages_raw, {})
+            else:
+                stripped = inject_image_descriptions(messages_raw, {})
         body = _build_source_body(request, model, stripped)
         if request.stream:
             def _on_noimg_usage(usage):
@@ -201,19 +226,28 @@ async def handle_chat_completion(
             headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
         )
 
-    # ── 3. Resolve 当前图片的描述（缓存 + 视觉调用）────────────
+    # ── 3. Resolve 图片描述（缓存 + 视觉调用）────────────
+    # reuse_historical_cache 开启时把历史图片一并传入：缓存命中的历史描述原地
+    # 注入（保住多轮追问上下文），未命中按 historical_cache_miss 处理，不新增分析。
+    resolve_images = all_images if cfg.image.reuse_historical_cache else current_images
     try:
         descriptions, vision_usage = await resolve_image_descriptions(
-            images=current_images,
+            images=resolve_images,
             model_config=model,
             allow_analysis_positions=current_positions,
             historical_cache_miss=cfg.image.historical_cache_miss,
             request_client=getattr(raw_request, "_httpx_client", None),
             user_question=extract_user_question(messages_raw),
+            failure_mode=model.vision_failure_mode,
         )
     except VisionAnalysisError as e:
         if model.vision_failure_mode == "skip":
-            body = _build_source_body(request, model, messages_raw)
+            # fail-open（借鉴 agent-vision-toolkit）：剥离图片 + 注入失败说明，
+            # 而不是把 image_url 原样发给纯文本源模型导致上游报错
+            note = f"[图片分析失败：{e.message}，已跳过视觉分析]"
+            replacements = {img.position: note for img in current_images}
+            stripped = inject_image_descriptions(messages_raw, replacements)
+            body = _build_source_body(request, model, stripped)
             if request.stream:
                 def _on_skip_usage(usage):
                     stats_tracker.record_call(
@@ -251,8 +285,12 @@ async def handle_chat_completion(
     enhanced_messages = inject_image_descriptions(messages_raw, descriptions)
 
     # ── 5. Merge and inject vision context into last user msg ────
-    # 只注入当前图片的描述（历史图片已剥离，不会进入当前问题）
-    merged = _merge_and_number_descriptions(descriptions)
+    # 只把「当前图片」的描述合并进当前问题（历史图片的描述已原地注入，
+    # 不再进入当前问题，避免旧图信息污染本轮提问）。
+    current_descriptions = {
+        pos: desc for pos, desc in descriptions.items() if pos in current_positions
+    }
+    merged = _merge_and_number_descriptions(current_descriptions)
     if merged:
         injection = _build_injection_text(merged)
 
@@ -293,6 +331,7 @@ async def handle_chat_completion(
             public_model_id=request.model if model.replace_response_model else model.source_model,
             stream=True,
             on_usage=_on_source_usage,
+            extra_usage=_vision_usage_extra(vision_usage),
         )
     else:
         resp, source_usage = await _forward_to_source(
@@ -300,6 +339,7 @@ async def handle_chat_completion(
             provider_key=model.source_provider,
             public_model_id=request.model if model.replace_response_model else model.source_model,
             stream=False,
+            extra_usage=_vision_usage_extra(vision_usage),
         )
         stats_tracker.record_call(
             model=request.model, images=len(all_images),
@@ -317,8 +357,10 @@ async def _iter_source_stream(
     provider_key: str,
     public_model_id: str,
     on_usage: callable | None = None,
+    extra_usage: dict | None = None,
 ):
-    """流式转发源模型：逐行 yield SSE 内容；收到 usage chunk 时回调 on_usage。"""
+    """流式转发源模型：逐行 yield SSE 内容；收到 usage chunk 时回调 on_usage。
+    extra_usage（如 vision_* token 统计）并入转发给客户端的 usage 块。"""
     cfg = get_config()
     provider = cfg.source_providers.get(provider_key)
     if not provider:
@@ -354,6 +396,14 @@ async def _iter_source_stream(
                     u = _extract_usage_from_chunk(data_str)
                     if u and on_usage:
                         on_usage(u)
+                    # 把视觉模型 token 用量并入 usage 块（vision_* 前缀，不覆盖标准字段）
+                    if u and extra_usage:
+                        try:
+                            data = json.loads(data_str)
+                            data["usage"] = {**u, **extra_usage}
+                            line = f"data: {json.dumps(data, ensure_ascii=False)}"
+                        except json.JSONDecodeError:
+                            pass
                     if first_chunk:
                         line = _sanitize_stream_chunk(line, public_model_id, True)
                         first_chunk = False
@@ -365,8 +415,7 @@ async def _iter_source_stream(
     except httpx.TimeoutException:
         yield f"data: {json.dumps({'error': {'message': 'Source model timeout'}})}\n\n"
         yield "data: [DONE]\n\n"
-    finally:
-        await client.aclose()
+    # 连接池化：client 由 providers 池统一管理，不在调用点关闭
 
 
 async def _combined_stream(
@@ -379,8 +428,9 @@ async def _combined_stream(
 ):
     """流式透传视觉模型的思考/分析过程，再无缝衔接源模型的思考与回答（单条 SSE 流）。
 
-    阶段 1：视觉分析调用改为流式，增量以 reasoning_content 形式推给客户端，
-            用户发完图立即能看到图像模型的思考链，不再静默等待。
+    阶段 1：视觉分析调用改为流式，视觉模型的 reasoning 与 content 增量都以
+            reasoning_content 形式推给客户端——首帧就是真实思考链（默认无预提示，
+            可配置 image.vision_stream_prelude 开启占位提示）。
     阶段 2：图片描述注入完成后，直接衔接源模型流式转发（思考链 + 回答）。
     """
     cfg = get_config()
@@ -390,23 +440,31 @@ async def _combined_stream(
     queue: asyncio.Queue = asyncio.Queue()
     is_first = {"value": True}
 
-    # 立即推一条预提示，消除图片下载/视觉模型首字前的静默等待
-    prelude, is_first["value"] = _build_vision_frame(
-        "【正在处理用户发送的图片…】", public_model_id, stream_id, True
-    )
-    yield prelude
+    # 历史缓存复用需要全部图片位置（含历史轮次）
+    all_images = extract_all_images_with_positions(messages_raw)
+
+    # 预提示（可选）：默认关闭——首帧即视觉模型真实输出，思考链完全真实；
+    # 开启则先推一条"正在处理"占位，消除下载/排队期的静默等待。
+    if cfg.image.vision_stream_prelude:
+        prelude, is_first["value"] = _build_vision_frame(
+            "【正在处理用户发送的图片…】", public_model_id, stream_id, True
+        )
+        yield prelude
 
     # ── 阶段 1：流式视觉分析 ───────────────────────────────────
+    resolve_images = all_images if cfg.image.reuse_historical_cache else current_images
+
     async def _resolve():
         try:
             return await resolve_image_descriptions(
-                images=current_images,
+                images=resolve_images,
                 model_config=model,
                 allow_analysis_positions=current_positions,
                 historical_cache_miss=cfg.image.historical_cache_miss,
                 request_client=getattr(raw_request, "_httpx_client", None),
                 user_question=extract_user_question(messages_raw),
                 stream_queue=queue,
+                failure_mode=model.vision_failure_mode,
             )
         finally:
             # 保证消费端一定能等到结束标记（即使内部抛异常也不会挂起）
@@ -418,6 +476,8 @@ async def _combined_stream(
             item = await queue.get()
             if item[0] == "done":
                 break
+            # item = ("token", kind, text)：kind ∈ {"reasoning", "content"}
+            # 统一进 reasoning_content（视觉阶段的分析即思考链），kind 保留供诊断
             frame, is_first["value"] = _build_vision_frame(
                 item[2], public_model_id, stream_id, is_first["value"]
             )
@@ -432,8 +492,11 @@ async def _combined_stream(
             yield f"data: {error_data}\n\n"
             yield "data: [DONE]\n\n"
             return
-        # skip：直接用原始消息转发源模型
-        body = _build_source_body(request, model, messages_raw)
+        # skip：剥离图片 + 注入失败说明后转发源模型（fail-open）
+        note = f"[图片分析失败：{e.message}，已跳过视觉分析]"
+        replacements = {img.position: note for img in current_images}
+        stripped = inject_image_descriptions(messages_raw, replacements)
+        body = _build_source_body(request, model, stripped)
         def _on_skip_usage(usage):
             stats_tracker.record_call(
                 model=request.model, images=len(current_images),
@@ -447,7 +510,10 @@ async def _combined_stream(
 
     # ── 阶段 2：注入描述并衔接源模型流 ────────────────────────
     enhanced_messages = inject_image_descriptions(messages_raw, descriptions)
-    merged = _merge_and_number_descriptions(descriptions)
+    current_descriptions = {
+        pos: desc for pos, desc in descriptions.items() if pos in current_positions
+    }
+    merged = _merge_and_number_descriptions(current_descriptions)
     if merged:
         injection = _build_injection_text(merged)
 
@@ -475,7 +541,10 @@ async def _combined_stream(
             source_tokens=usage,
         )
 
-    async for line in _iter_source_stream(body, model.source_provider, public_model_id, on_usage=_on_source_usage):
+    async for line in _iter_source_stream(
+        body, model.source_provider, public_model_id,
+        on_usage=_on_source_usage, extra_usage=_vision_usage_extra(vision_usage),
+    ):
         yield line
 
 
@@ -485,6 +554,7 @@ async def _forward_to_source(
     public_model_id: str,
     stream: bool = False,
     on_usage: callable | None = None,
+    extra_usage: dict | None = None,
 ) -> tuple[JSONResponse | StreamingResponse, dict | None]:
     cfg = get_config()
     provider = cfg.source_providers.get(provider_key)
@@ -502,16 +572,20 @@ async def _forward_to_source(
                 return _openai_error_response(resp.status_code, resp.text[:500]), None
             data = resp.json()
             usage = data.get("usage")
+            # 视觉 token 用量并入响应 usage（vision_* 前缀，不覆盖标准字段）
+            if extra_usage and isinstance(usage, dict):
+                data["usage"] = {**usage, **extra_usage}
             if "model" in data:
                 data["model"] = public_model_id
             return JSONResponse(content=data), usage
         except httpx.TimeoutException:
             return _openai_error_response(504, "Source model timeout"), None
-        finally:
-            await client.aclose()
+        # 连接池化：client 由 providers 池统一管理，不在调用点关闭
 
     async def _stream_with_tracking():
-        async for line in _iter_source_stream(body, provider_key, public_model_id, on_usage=on_usage):
+        async for line in _iter_source_stream(
+            body, provider_key, public_model_id, on_usage=on_usage, extra_usage=extra_usage
+        ):
             yield line
 
     return (

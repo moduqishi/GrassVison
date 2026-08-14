@@ -47,6 +47,12 @@ models:
     vision_failure_mode: error
     replace_response_model: true
     cache_prompt: null
+    # 视觉渠道故障转移：主渠道失败时按序尝试（渠道 key 列表）
+    vision_provider_failover: []
+    # 定位-放大-再读：问题针对具体 UI 元素时先定位坐标框，再裁剪放大二次精读
+    grounding_zoom: false
+    # 结构化证据输出：视觉模型返回 JSON 证据，格式化注入（不确定项单独标注）
+    structured_evidence: false
   deepseek-v4-pro-vision:
     name: deepseek-v4-pro-vision
     enabled: true
@@ -80,12 +86,23 @@ image:
   max_height: 1000000000000000
   download_timeout: 20
   allow_private_network: false
+  # 多图策略：independent=逐图独立分析 | auto=对比意图时联合一次调用 | combined=多图总是联合
   multi_image_mode: independent
   analysis_scope: latest_user_message
   historical_cache_miss: drop
   thinking_guidance: false
   stream_vision_thinking: false
+  # 流式视觉阶段预提示：false=首帧即真实思考链（默认）；true=先推"正在处理图片"占位
+  vision_stream_prelude: false
   comparison_strategy: source_model
+  # 问题感知缓存：视觉模型直接收到用户问题，缓存键随问题变化（针对性更强、命中率下降）
+  question_aware_cache: false
+  # 历史图片缓存复用：纯文字追问上一轮图片时，缓存命中的描述原地注入（不触发新分析）
+  reuse_historical_cache: false
+  # 多图并发分析并发度上限
+  vision_concurrency: 4
+  # 长截图切片 OCR：高宽比≥3 且高度≥1800px 的截图自动分段分析后合并
+  long_screenshot_ocr: false
   vision_cache:
     enabled: true
     ttl_seconds: 3600

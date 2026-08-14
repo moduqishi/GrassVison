@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 1520px; height: 700px; overflow: hidden;
+    font-family: -apple-system, "PingFang SC", "Hiragino Sans GB", "Helvetica Neue", sans-serif;
+    color: #e2e8f0;
+    background:
+      radial-gradient(1000px 420px at 12% -8%, rgba(34,211,238,.12), transparent 60%),
+      radial-gradient(900px 420px at 92% 112%, rgba(139,92,246,.13), transparent 60%),
+      linear-gradient(160deg, #070b16 0%, #0b1220 50%, #0d1526 100%);
+    display: flex; flex-direction: column;
+  }
+  .grid::before {
+    content: ""; position: absolute; inset: 0;
+    background-image:
+      linear-gradient(rgba(148,163,184,.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(148,163,184,.045) 1px, transparent 1px);
+    background-size: 44px 44px;
+    mask-image: radial-gradient(ellipse at 45% 40%, #000 35%, transparent 80%);
+  }
+  .header { position: relative; text-align: center; padding-top: 30px; }
+  .header h1 {
+    font-size: 30px; font-weight: 800; letter-spacing: .5px;
+    background: linear-gradient(90deg, #7dd3fc, #a78bfa);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .header p { margin-top: 6px; font-size: 14px; color: #64748b; letter-spacing: 1.5px; }
+
+  .wrap { position: relative; display: flex; gap: 26px; padding: 26px 34px 0; flex: 1; }
+
+  /* 聊天窗口 */
+  .chat {
+    flex: 1; background: rgba(15,23,42,.66); border: 1px solid rgba(148,163,184,.14);
+    border-radius: 22px; overflow: hidden; backdrop-filter: blur(14px);
+    box-shadow: 0 22px 60px rgba(0,0,0,.5);
+  }
+  .chat-bar {
+    display: flex; align-items: center; gap: 8px; padding: 13px 18px;
+    background: rgba(30,41,59,.7); border-bottom: 1px solid rgba(148,163,184,.1);
+  }
+  .chat-bar .dots { display: flex; gap: 6px; }
+  .chat-bar .dots i { width: 11px; height: 11px; border-radius: 50%; display: block; }
+  .chat-bar .dots i:nth-child(1){ background:#f87171 } .chat-bar .dots i:nth-child(2){ background:#fbbf24 } .chat-bar .dots i:nth-child(3){ background:#34d399 }
+  .chat-bar .title { flex: 1; text-align: center; font-size: 14px; font-weight: 700; color: #94a3b8; letter-spacing: .5px; }
+  .chat-bar .badge { font-size: 10.5px; color: #6ee7b7; padding: 3px 10px; border-radius: 999px; background: rgba(52,211,153,.12); border: 1px solid rgba(52,211,153,.35); }
+
+  .chat-body { padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; }
+
+  .bubble { max-width: 82%; padding: 12px 15px; border-radius: 14px; font-size: 13.5px; line-height: 1.65; position: relative; }
+  .bubble .tag { font-size: 10px; letter-spacing: 1px; opacity: .75; margin-bottom: 5px; display: flex; align-items: center; gap: 6px; font-weight: 700; }
+  .bubble .tag svg { width: 12px; height: 12px; }
+
+  .u { align-self: flex-end; background: linear-gradient(135deg, #2563eb, #3b82f6); color: #fff; border-bottom-right-radius: 4px; box-shadow: 0 8px 24px rgba(37,99,235,.35); }
+  .u .img-chip { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 11.5px; background: rgba(255,255,255,.16); padding: 4px 10px; border-radius: 8px; }
+
+  .v { align-self: flex-start; background: rgba(49,35,84,.85); border: 1px solid rgba(167,139,250,.4); color: #e9e4ff; border-bottom-left-radius: 4px; }
+  .v .tag { color: #c4b5fd; }
+  .v .err { color: #fdba74; margin-top: 4px; }
+
+  .s { align-self: flex-start; background: rgba(19,44,63,.85); border: 1px solid rgba(34,211,238,.35); color: #d8f4fe; border-bottom-left-radius: 4px; }
+  .s .tag { color: #67e8f9; }
+
+  .a { align-self: flex-start; background: rgba(17,43,39,.85); border: 1px solid rgba(52,211,153,.35); color: #d1fae5; border-bottom-left-radius: 4px; }
+  .a .tag { color: #6ee7b7; }
+  .a .fix { color: #fde68a; font-family: "SF Mono", Menlo, monospace; margin-top: 4px; }
+
+  .cursor { display: inline-block; width: 8px; height: 15px; background: #67e8f9; vertical-align: -2px; animation: blink 1s steps(2) infinite; margin-left: 3px; border-radius: 1px; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* 右侧说明 */
+  .notes { width: 330px; display: flex; flex-direction: column; gap: 14px; }
+  .note {
+    background: rgba(15,23,42,.6); border: 1px solid rgba(148,163,184,.13);
+    border-radius: 16px; padding: 15px 17px; backdrop-filter: blur(10px);
+  }
+  .note .nt { font-size: 14px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+  .note .nt .chip { width: 9px; height: 9px; border-radius: 3px; }
+  .note .ns { margin-top: 6px; font-size: 12px; color: #94a3b8; line-height: 1.7; }
+  .note .code { font-family: "SF Mono", Menlo, monospace; font-size: 11px; color: #7dd3fc; background: rgba(125,211,252,.08); padding: 2px 6px; border-radius: 5px; }
+  .note.n1 .nt { color: #ddd6fe; } .note.n1 .chip { background: #a78bfa; box-shadow: 0 0 10px #a78bfa; }
+  .note.n2 .nt { color: #7dd3fc; } .note.n2 .chip { background: #22d3ee; box-shadow: 0 0 10px #22d3ee; }
+  .note.n3 .nt { color: #6ee7b7; } .note.n3 .chip { background: #34d399; box-shadow: 0 0 10px #34d399; }
+  .note.n4 .nt { color: #fbbf24; } .note.n4 .chip { background: #fbbf24; box-shadow: 0 0 10px #fbbf24; }
+
+  .footer { position: relative; text-align: center; padding: 14px 0 16px; font-size: 12.5px; color: #475569; letter-spacing: 1px; }
+  .footer b { color: #64748b; }
+</style>
+</head>
+<body>
+<div class="grid"></div>
+
+<div class="header">
+  <h1>单条 SSE 流 · 真实思考链无缝衔接</h1>
+  <p>视觉模型分析 → 源模型思考 → 最终回答，一个连接全程流式</p>
+</div>
+
+<div class="wrap">
+  <div class="chat">
+    <div class="chat-bar">
+      <span class="dots"><i></i><i></i><i></i></span>
+      <span class="title">Chatbox — deepseek-v4-flash-vision</span>
+      <span class="badge">● STREAMING</span>
+    </div>
+    <div class="chat-body">
+      <div class="bubble u">
+        <div>请分析这张代码截图，错误是什么？</div>
+        <div class="img-chip">🖼️ code.png</div>
+      </div>
+      <div class="bubble v">
+        <div class="tag"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>视觉模型思考 · reasoning_content</div>
+        <div>这是一段 Python 代码… 定义了 hello 函数…</div>
+        <div class="err">⚠️ 检测到错误：TypeError: can only concatenate str</div>
+      </div>
+      <div class="bubble s">
+        <div class="tag">🧠 源模型思考链 · reasoning_content</div>
+        <div>结合图片分析：hello(name) 把 name 与字符串拼接，若 name 非字符串会抛 TypeError…<span class="cursor"></span></div>
+      </div>
+      <div class="bubble a">
+        <div class="tag">✨ 源模型回答 · content</div>
+        <div>问题出在第 7 行调用处：传入的 name 不是字符串。修复：</div>
+        <div class="fix">name = str(name)  # 先转字符串再拼接</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="notes">
+    <div class="note n1">
+      <div class="nt"><span class="chip"></span>视觉模型思考</div>
+      <div class="ns">推理与 OCR 过程实时透传为 <span class="code">reasoning_content</span>，首帧即真实内容，无占位提示</div>
+    </div>
+    <div class="note n2">
+      <div class="nt"><span class="chip"></span>源模型思考链</div>
+      <div class="ns">DeepSeek / GLM 原生思考链字节级透传，零二次处理</div>
+    </div>
+    <div class="note n3">
+      <div class="nt"><span class="chip"></span>最终回答</div>
+      <div class="ns">标准 <span class="code">content</span> 字段输出，客户端无需任何改动</div>
+    </div>
+    <div class="note n4">
+      <div class="nt"><span class="chip"></span>零额外延迟</div>
+      <div class="ns">图片下载与视觉分析全程流式，缓存命中直接复用上次分析</div>
+    </div>
+  </div>
+</div>
+
+<div class="footer">reasoning_content + content 双通道 · 与原生多模态体验 <b>完全一致</b></div>
+</body>
+</html>

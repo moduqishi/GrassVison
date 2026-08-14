@@ -1,11 +1,20 @@
-"""Image hash cache with LRU eviction, TTL, and single-flight deduplication."""
+"""Image hash cache with LRU eviction, TTL, single-flight dedup, and disk snapshot."""
 from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
+import os
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
+
+from app.config import STATS_DIR
+
+# 磁盘快照：服务重启后缓存不丢失（多轮追问跨重启仍可命中）
+SNAPSHOT_PATH = STATS_DIR / "vision_cache.json"
+# wall-clock 与 monotonic 的偏移：monotonic 在重启后重置，持久化必须用 wall time
+_WALL_OFFSET = time.time() - time.monotonic()
 
 
 @dataclass
@@ -22,6 +31,11 @@ class CacheEntry:
 
 def _now() -> float:
     return time.monotonic()
+
+
+def _wall_to_mono(wall: float) -> float:
+    """wall-clock 时间戳转回 monotonic（当前进程）。"""
+    return wall - _WALL_OFFSET
 
 
 class ImageCache:
@@ -179,6 +193,70 @@ class ImageCache:
                 "ttl_seconds": self.ttl_seconds,
                 "enabled": self.enabled,
             }
+
+    # ── 磁盘快照 ────────────────────────────────────────────────
+
+    async def save_snapshot(self) -> None:
+        """把未过期的缓存条目写入磁盘（wall-clock 时间戳）。"""
+        if not self.enabled:
+            return
+        async with self._lock:
+            now = time.monotonic()
+            data = {}
+            for key, entry in self._store.items():
+                if entry.expires_at > now:
+                    data[key] = {
+                        "result": entry.result,
+                        "content_hash": entry.content_hash,
+                        "provider_id": entry.provider_id,
+                        "model_id": entry.model_id,
+                        "prompt_hash": entry.prompt_hash,
+                        "analysis_mode": entry.analysis_mode,
+                        "created_wall": entry.created_at + _WALL_OFFSET,
+                        "expires_wall": entry.expires_at + _WALL_OFFSET,
+                    }
+        try:
+            SNAPSHOT_PATH.parent.mkdir(parents=True, exist_ok=True)
+            tmp = SNAPSHOT_PATH.with_suffix(".tmp")
+            tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp, SNAPSHOT_PATH)
+        except Exception:
+            pass
+
+    async def load_snapshot(self) -> None:
+        """启动时从磁盘加载未过期条目（wall 时间转回 monotonic）。"""
+        if not self.enabled:
+            return
+        if not SNAPSHOT_PATH.exists():
+            return
+        try:
+            data = json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        if not isinstance(data, dict):
+            return
+        now = time.monotonic()
+        async with self._lock:
+            for key, raw in data.items():
+                if not isinstance(raw, dict):
+                    continue
+                expires = _wall_to_mono(raw.get("expires_wall", 0))
+                if expires <= now:
+                    continue
+                if len(self._store) >= self.max_entries:
+                    break
+                created = _wall_to_mono(raw.get("created_wall", expires))
+                self._store[key] = CacheEntry(
+                    result=raw.get("result", ""),
+                    content_hash=raw.get("content_hash", ""),
+                    provider_id=raw.get("provider_id", ""),
+                    model_id=raw.get("model_id", ""),
+                    prompt_hash=raw.get("prompt_hash", ""),
+                    analysis_mode=raw.get("analysis_mode", "independent"),
+                    created_at=created,
+                    expires_at=expires,
+                )
+                self._store.move_to_end(key)
 
 
 # Global singleton

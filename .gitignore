@@ -40,3 +40,6 @@ config.yaml
 # PyInstaller build artifacts
 dist/
 *.spec
+
+# Config backups with real keys (never commit)
+config.yaml.bak*

@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 1520px; height: 860px; overflow: hidden;
+    font-family: -apple-system, "PingFang SC", "Hiragino Sans GB", "Helvetica Neue", sans-serif;
+    color: #e2e8f0;
+    background:
+      radial-gradient(1200px 500px at 15% -10%, rgba(56,130,246,.16), transparent 60%),
+      radial-gradient(1000px 500px at 90% 110%, rgba(139,92,246,.14), transparent 60%),
+      radial-gradient(800px 400px at 50% 50%, rgba(34,211,238,.05), transparent 60%),
+      linear-gradient(160deg, #070b16 0%, #0b1220 45%, #0d1526 100%);
+    position: relative;
+  }
+  /* 网格 */
+  .grid::before {
+    content: ""; position: absolute; inset: 0;
+    background-image:
+      linear-gradient(rgba(148,163,184,.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(148,163,184,.05) 1px, transparent 1px);
+    background-size: 42px 42px;
+    mask-image: radial-gradient(ellipse at 50% 40%, #000 30%, transparent 75%);
+  }
+  .header { position: relative; text-align: center; padding-top: 34px; }
+  .logo {
+    display: inline-flex; align-items: center; gap: 12px;
+    font-size: 40px; font-weight: 800; letter-spacing: -.5px;
+    background: linear-gradient(90deg, #7dd3fc, #a78bfa 55%, #6ee7b7);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .logo svg { width: 40px; height: 40px; }
+  .tagline { margin-top: 8px; font-size: 17px; color: #64748b; letter-spacing: 2px; }
+  .tagline b { color: #94a3b8; font-weight: 600; }
+
+  .stage { position: relative; display: flex; align-items: center; justify-content: center; gap: 30px; margin-top: 34px; padding: 0 30px; }
+
+  .node {
+    background: rgba(15,23,42,.72);
+    border: 1px solid rgba(148,163,184,.14);
+    border-radius: 20px;
+    backdrop-filter: blur(14px);
+    box-shadow: 0 18px 50px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.05);
+    padding: 22px 24px;
+  }
+  .node h3 { font-size: 16px; font-weight: 700; color: #e2e8f0; display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .node h3 .ico { width: 22px; height: 22px; }
+  .node .sub { font-size: 12.5px; color: #94a3b8; line-height: 1.7; }
+  .node .sub .hl { color: #7dd3fc; }
+
+  /* 客户端 */
+  .client { width: 260px; text-align: center; }
+  .client h3 { justify-content: center; font-size: 17px; }
+  .client .apps { margin-top: 10px; display: flex; gap: 8px; justify-content: center; }
+  .client .apps span {
+    font-size: 11px; padding: 4px 10px; border-radius: 999px;
+    background: rgba(56,130,246,.12); color: #93c5fd; border: 1px solid rgba(56,130,246,.25);
+  }
+  .client .act { margin-top: 14px; font-size: 12.5px; color: #7dd3fc; }
+
+  /* 核心 */
+  .core {
+    width: 820px; position: relative; overflow: hidden;
+    background:
+      linear-gradient(180deg, rgba(30,41,59,.55), rgba(15,23,42,.75));
+    border: 1px solid rgba(56,130,246,.35);
+    box-shadow: 0 0 0 1px rgba(56,130,246,.08), 0 24px 70px rgba(0,0,0,.5),
+                0 0 60px rgba(56,130,246,.10);
+  }
+  .core::after {
+    content: ""; position: absolute; inset: -1px; border-radius: 20px; pointer-events: none;
+    background: linear-gradient(120deg, rgba(56,130,246,.25), transparent 30%, transparent 70%, rgba(139,92,246,.25));
+    opacity: .5;
+  }
+  .core-head {
+    display: flex; align-items: center; gap: 10px; padding: 16px 22px;
+    border-bottom: 1px solid rgba(148,163,184,.12);
+  }
+  .core-head .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .core-head .dot.r { background: #f87171; } .core-head .dot.y { background: #fbbf24; } .core-head .dot.g { background: #34d399; }
+  .core-head .name { flex: 1; text-align: center; font-size: 16px; font-weight: 700; color: #bfdbfe; letter-spacing: 1px; }
+  .core-head .live {
+    font-size: 10.5px; color: #6ee7b7; padding: 3px 10px; border-radius: 999px;
+    background: rgba(52,211,153,.12); border: 1px solid rgba(52,211,153,.35);
+    display: flex; align-items: center; gap: 5px;
+  }
+  .core-head .live::before { content:""; width:6px; height:6px; border-radius:50%; background:#34d399; box-shadow:0 0 8px #34d399; }
+
+  .steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; padding: 20px 22px; }
+  .step {
+    background: rgba(15,23,42,.6); border: 1px solid rgba(148,163,184,.12); border-radius: 14px;
+    padding: 14px 12px; text-align: center; position: relative;
+  }
+  .step .num {
+    width: 26px; height: 26px; border-radius: 50%; margin: 0 auto 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 800; color: #0b1220;
+  }
+  .step .t { font-size: 14px; font-weight: 700; color: #f1f5f9; }
+  .step .s { font-size: 11px; color: #94a3b8; margin-top: 4px; line-height: 1.5; }
+  .step.c1 { border-color: rgba(96,165,250,.4); } .step.c1 .num { background: #60a5fa; }
+  .step.c2 { border-color: rgba(167,139,250,.4); } .step.c2 .num { background: #a78bfa; }
+  .step.c3 { border-color: rgba(34,211,238,.4); } .step.c3 .num { background: #22d3ee; }
+  .step.c4 { border-color: rgba(52,211,153,.4); } .step.c4 .num { background: #34d399; }
+
+  .core-flow { text-align: center; padding: 0 22px 14px; }
+  .core-flow .f1 { font-size: 14px; color: #cbd5e1; }
+  .core-flow .f1 b { background: linear-gradient(90deg,#7dd3fc,#a78bfa); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .core-flow .f2 { margin-top: 6px; font-size: 12px; color: #7dd3fc; letter-spacing: .5px; }
+
+  .models { display: flex; gap: 10px; padding: 0 22px 20px; }
+  .model {
+    flex: 1; background: rgba(15,23,42,.55); border: 1px solid rgba(148,163,184,.12);
+    border-radius: 12px; padding: 10px 12px; text-align: center;
+  }
+  .model .mn { font-size: 13px; font-weight: 700; color: #e2e8f0; font-family: "SF Mono", Menlo, monospace; }
+  .model .mt { font-size: 10.5px; color: #64748b; margin-top: 2px; }
+
+  /* 视觉模型 */
+  .vision { width: 280px; border-color: rgba(167,139,250,.35); }
+  .vision h3 { color: #ddd6fe; }
+  .vision .vl { margin-top: 8px; font-size: 12px; color: #c4b5fd; line-height: 1.9; font-family: "SF Mono", Menlo, monospace; }
+  .vision .cap { margin-top: 10px; font-size: 12px; color: #94a3b8; line-height: 1.7; }
+  .vision .cap .hl { color: #c4b5fd; }
+
+  /* 箭头 SVG */
+  .arrows { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
+  .arrows svg { position: absolute; overflow: visible; }
+
+  .footer { position: absolute; bottom: 22px; width: 100%; text-align: center; font-size: 13.5px; color: #475569; letter-spacing: 1px; }
+  .footer b { color: #64748b; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="grid"></div>
+
+<div class="header">
+  <div class="logo">
+    <svg viewBox="0 0 48 48" fill="none"><defs><linearGradient id="lg" x1="0" y1="0" x2="48" y2="48"><stop stop-color="#7dd3fc"/><stop offset="1" stop-color="#a78bfa"/></linearGradient></defs>
+      <rect x="4" y="4" width="40" height="40" rx="12" stroke="url(#lg)" stroke-width="3" fill="rgba(125,211,252,.08)"/>
+      <path d="M14 30c4-8 8-8 10-4s4 4 10-8" stroke="url(#lg)" stroke-width="3" stroke-linecap="round" fill="none"/>
+      <circle cx="14" cy="30" r="2.6" fill="#7dd3fc"/><circle cx="34" cy="18" r="2.6" fill="#a78bfa"/>
+    </svg>
+    GrassVision
+  </div>
+  <div class="tagline">让纯文本大模型拥有 <b>原生视觉</b> · OpenAI 兼容本地中转</div>
+</div>
+
+<div class="stage">
+  <!-- 客户端 -->
+  <div class="node client">
+    <h3><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="#93c5fd" stroke-width="2"><rect x="2" y="4" width="20" height="14" rx="3"/><path d="M8 21h8M12 18v3"/></svg>OpenAI 兼容客户端</h3>
+    <div class="apps"><span>Chatbox</span><span>OpenWebUI</span><span>自定义</span></div>
+    <div class="act">📎 粘贴图片 · 发起对话 · 流式渲染</div>
+  </div>
+
+  <!-- 核心 -->
+  <div class="node core">
+    <div class="core-head">
+      <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+      <span class="name">GrassVision 增强引擎</span>
+      <span class="live">REALTIME</span>
+    </div>
+    <div class="steps">
+      <div class="step c1"><div class="num">1</div><div class="t">图片检测</div><div class="s">image_url / 工具截图<br>自动识别</div></div>
+      <div class="step c2"><div class="num">2</div><div class="t">意图感知</div><div class="s">focus hint<br>问题感知缓存</div></div>
+      <div class="step c3"><div class="num">3</div><div class="t">视觉分析</div><div class="s">流式思考链 · grounding<br>长截图切片 · 联合对比</div></div>
+      <div class="step c4"><div class="num">4</div><div class="t">描述注入</div><div class="s">结构化证据<br>历史缓存复用</div></div>
+    </div>
+    <div class="core-flow">
+      <div class="f1">视觉模型分析 <b>→</b> 描述注入 <b>→</b> 源模型基于真实图片信息推理</div>
+      <div class="f2">单条 SSE 流 · 思考链无缝衔接 · 故障转移 · 磁盘缓存 · 连接池</div>
+    </div>
+    <div class="models">
+      <div class="model"><div class="mn">deepseek-v4-flash</div><div class="mt">源模型 · 思考链</div></div>
+      <div class="model"><div class="mn">deepseek-v4-pro</div><div class="mt">源模型 · 强推理</div></div>
+      <div class="model"><div class="mn">glm-5.2</div><div class="mt">源模型 · 多源路由</div></div>
+    </div>
+  </div>
+
+  <!-- 视觉模型 -->
+  <div class="node vision">
+    <h3><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="#c4b5fd" stroke-width="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>视觉模型</h3>
+    <div class="vl">mimo-v2.5<br>Doubao-Seed-2.0<br>MiniMax-M3 ✦ 思考</div>
+    <div class="cap">图片 → <span class="hl">结构化证据</span><br>→ 坐标 · 文字 · 版面 · 不确定项</div>
+  </div>
+</div>
+
+<div class="arrows">
+  <svg width="1520" height="860" viewBox="0 0 1520 860">
+    <defs>
+      <marker id="ab" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#60a5fa"/></marker>
+      <marker id="ag" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#34d399"/></marker>
+      <marker id="ap" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#a78bfa"/></marker>
+      <linearGradient id="g1" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#60a5fa"/><stop offset="1" stop-color="#7dd3fc"/></linearGradient>
+      <linearGradient id="g2" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#a78bfa"/><stop offset="1" stop-color="#22d3ee"/></linearGradient>
+    </defs>
+    <!-- 客户端 → 核心 -->
+    <path d="M300 390 C 360 390, 380 360, 430 360" stroke="url(#g1)" stroke-width="3.5" fill="none" marker-end="url(#ab)"/>
+    <!-- 核心 → 客户端 -->
+    <path d="M430 500 C 370 500, 360 530, 300 528" stroke="#34d399" stroke-width="3" fill="none" marker-end="url(#ag)" stroke-dasharray="7 6"/>
+    <!-- 核心 → 视觉 -->
+    <path d="M1180 330 C 1230 330, 1250 310, 1280 300" stroke="url(#g2)" stroke-width="3.5" fill="none" marker-end="url(#ap)"/>
+    <!-- 视觉 → 核心 -->
+    <path d="M1280 430 C 1240 450, 1220 470, 1180 480" stroke="#22d3ee" stroke-width="3" fill="none" marker-end="url(#ag)" stroke-dasharray="7 6"/>
+  </svg>
+</div>
+
+<div class="footer">本地中转 · 不改客户端 · 与原生多模态 API <b>完全兼容</b></div>
+</body>
+</html>

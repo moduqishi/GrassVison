@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 1200px; height: 800px; overflow: hidden;
+    font-family: -apple-system, "PingFang SC", "Hiragino Sans GB", "Helvetica Neue", sans-serif;
+    background: #0d1220; color: #e2e8f0; display: flex;
+  }
+  /* ── 侧边栏 ── */
+  .sidebar {
+    width: 210px; background: #0a0f1c; border-right: 1px solid rgba(148,163,184,.1);
+    padding: 20px 14px; display: flex; flex-direction: column; gap: 4px;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 0 8px 18px; }
+  .brand .lg {
+    width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(135deg, #22d3ee, #8b5cf6); font-weight: 800; font-size: 17px; color: #0b1220;
+  }
+  .brand .nm { font-weight: 700; font-size: 15px; }
+  .brand .nm small { display: block; font-weight: 400; font-size: 10px; color: #64748b; }
+  .menu { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; font-size: 13.5px; color: #94a3b8; }
+  .menu svg { width: 17px; height: 17px; opacity: .8; }
+  .menu.active { background: rgba(56,130,246,.14); color: #93c5fd; border: 1px solid rgba(56,130,246,.25); }
+  .menu .badge { margin-left: auto; font-size: 10px; background: rgba(239,68,68,.85); color: #fff; padding: 1px 7px; border-radius: 999px; }
+  .side-foot { margin-top: auto; padding: 10px 12px; font-size: 11px; color: #475569; border-top: 1px solid rgba(148,163,184,.08); }
+
+  /* ── 主区 ── */
+  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .topbar {
+    height: 56px; display: flex; align-items: center; gap: 16px; padding: 0 22px;
+    border-bottom: 1px solid rgba(148,163,184,.1); background: rgba(13,18,32,.6);
+  }
+  .search {
+    flex: 1; max-width: 380px; display: flex; align-items: center; gap: 8px;
+    background: rgba(30,41,59,.8); border: 1px solid rgba(148,163,184,.15); border-radius: 10px;
+    padding: 7px 12px; color: #64748b; font-size: 12.5px;
+  }
+  .search svg { width: 15px; height: 15px; }
+  .top-right { margin-left: auto; display: flex; align-items: center; gap: 14px; }
+  .bell { position: relative; }
+  .bell svg { width: 19px; height: 19px; color: #94a3b8; }
+  .bell .dot { position: absolute; top: -2px; right: -2px; width: 8px; height: 8px; border-radius: 50%; background: #ef4444; border: 2px solid #0d1220; }
+  .avatar { width: 32px; height: 32px; border-radius: 50%; background: linear-gradient(135deg, #f59e0b, #ef4444); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; color: #fff; }
+
+  .content { flex: 1; padding: 22px 24px; overflow: hidden; }
+  .page-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+  .page-head h1 { font-size: 20px; font-weight: 700; }
+  .page-head .sub { font-size: 12px; color: #64748b; margin-top: 3px; }
+  .tools { display: flex; gap: 10px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600;
+    padding: 9px 16px; border-radius: 10px; border: 1px solid transparent; cursor: pointer;
+  }
+  .btn svg { width: 15px; height: 15px; }
+  .btn.primary { background: linear-gradient(135deg, #2563eb, #3b82f6); color: #fff; box-shadow: 0 6px 18px rgba(37,99,235,.4); }
+  .btn.ghost { background: rgba(30,41,59,.8); color: #cbd5e1; border-color: rgba(148,163,184,.2); }
+
+  .stat-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 18px; }
+  .stat {
+    background: rgba(15,23,42,.75); border: 1px solid rgba(148,163,184,.12); border-radius: 14px; padding: 15px 16px;
+  }
+  .stat .lbl { font-size: 11.5px; color: #94a3b8; }
+  .stat .val { font-size: 24px; font-weight: 800; margin-top: 5px; letter-spacing: -.5px; }
+  .stat .trend { font-size: 11px; margin-top: 6px; display: flex; align-items: center; gap: 5px; }
+  .trend.up { color: #34d399; } .trend.down { color: #f87171; }
+  .stat .mini { width: 100%; height: 26px; margin-top: 8px; }
+
+  .row2 { display: grid; grid-template-columns: 1.6fr 1fr; gap: 14px; margin-bottom: 18px; }
+  .card { background: rgba(15,23,42,.75); border: 1px solid rgba(148,163,184,.12); border-radius: 14px; padding: 16px; }
+  .card .ch { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .card .ch .t { font-size: 14px; font-weight: 700; }
+  .card .ch .s { font-size: 11px; color: #64748b; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th { text-align: left; color: #64748b; font-weight: 600; font-size: 11px; padding: 8px 10px; border-bottom: 1px solid rgba(148,163,184,.12); }
+  td { padding: 9px 10px; border-bottom: 1px solid rgba(148,163,184,.07); }
+  .st {
+    display: inline-block; font-size: 10.5px; font-weight: 700; padding: 3px 9px; border-radius: 999px;
+  }
+  .st.ok { background: rgba(52,211,153,.13); color: #34d399; border: 1px solid rgba(52,211,153,.3); }
+  .st.warn { background: rgba(245,158,11,.13); color: #fbbf24; border: 1px solid rgba(245,158,11,.3); }
+  .st.err { background: rgba(239,68,68,.13); color: #f87171; border: 1px solid rgba(239,68,68,.3); }
+
+  .feed { display: flex; flex-direction: column; gap: 11px; }
+  .feed-item { display: flex; gap: 10px; font-size: 12px; color: #cbd5e1; }
+  .feed-item .av { width: 26px; height: 26px; border-radius: 8px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; }
+  .feed-item .tm { color: #64748b; font-size: 10.5px; margin-top: 2px; }
+</style>
+</head>
+<body>
+  <!-- 侧边栏 -->
+  <div class="sidebar">
+    <div class="brand">
+      <div class="lg">N</div>
+      <div class="nm">NovaCloud<small>数据分析平台</small></div>
+    </div>
+    <div class="menu active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>仪表盘</div>
+    <div class="menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 2v4M18 2v4M3 10h18M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg>订单管理<span class="badge">12</span></div>
+    <div class="menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="4"/><path d="M3 21c0-3 3-5 6-5s6 2 6 5"/><path d="M16 3.5a4 4 0 010 7M20 21c0-3-2-4.5-4.5-5"/></svg>用户管理</div>
+    <div class="menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l8 4-8 4-8-4 8-4zM4 11l8 4 8-4M4 16l8 4 8-4"/></svg>商品中心</div>
+    <div class="menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>数据分析</div>
+    <div class="menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 00-.1-1.2l2-1.5-2-3.4-2.3 1a7 7 0 00-2-1.2L14 3h-4l-.5 2.7a7 7 0 00-2 1.2l-2.4-1-2 3.4 2 1.5A7 7 0 006 12a7 7 0 00.1 1.2l-2 1.5 2 3.4 2.3-1a7 7 0 002 1.2L10 21h4l.5-2.7a7 7 0 002-1.2l2.4 1 2-3.4-2-1.5c.1-.4.1-.8.1-1.2z"/></svg>系统设置</div>
+    <div class="side-foot">v2.4.1 · 运行 128 天</div>
+  </div>
+
+  <!-- 主区 -->
+  <div class="main">
+    <div class="topbar">
+      <div class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>搜索订单、用户、商品…</div>
+      <div class="top-right">
+        <div class="bell"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 01-3.4 0"/></svg><span class="dot"></span></div>
+        <div class="avatar">管</div>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="page-head">
+        <div>
+          <h1>数据分析中心</h1>
+          <div class="sub">2026 年 8 月 · 数据每 5 分钟自动刷新</div>
+        </div>
+        <div class="tools">
+          <button class="btn ghost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 11-2.6-6.4M21 3v6h-6"/></svg>刷新</button>
+          <button class="btn primary" id="export-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></svg>导出报表</button>
+        </div>
+      </div>
+
+      <div class="stat-row">
+        <div class="stat"><div class="lbl">总营收</div><div class="val">¥ 1,284,630</div><div class="trend up">▲ 12.4% 较上月</div>
+          <svg class="mini" viewBox="0 0 100 26" preserveAspectRatio="none"><polyline points="0,20 15,17 30,18 45,12 60,13 75,7 90,8 100,3" fill="none" stroke="#34d399" stroke-width="2"/></svg></div>
+        <div class="stat"><div class="lbl">订单总数</div><div class="val">48,291</div><div class="trend up">▲ 8.1% 较上月</div>
+          <svg class="mini" viewBox="0 0 100 26" preserveAspectRatio="none"><polyline points="0,22 15,18 30,19 45,14 60,15 75,10 90,11 100,6" fill="none" stroke="#60a5fa" stroke-width="2"/></svg></div>
+        <div class="stat"><div class="lbl">活跃用户</div><div class="val">12,846</div><div class="trend down">▼ 2.3% 较上月</div>
+          <svg class="mini" viewBox="0 0 100 26" preserveAspectRatio="none"><polyline points="0,6 15,9 30,8 45,13 60,12 75,17 90,16 100,21" fill="none" stroke="#f87171" stroke-width="2"/></svg></div>
+        <div class="stat"><div class="lbl">转化率</div><div class="val">3.62%</div><div class="trend up">▲ 1.8% 较上月</div>
+          <svg class="mini" viewBox="0 0 100 26" preserveAspectRatio="none"><polyline points="0,18 15,16 30,17 45,11 60,12 75,6 90,7 100,2" fill="none" stroke="#a78bfa" stroke-width="2"/></svg></div>
+      </div>
+
+      <div class="row2">
+        <div class="card">
+          <div class="ch"><span class="t">营收趋势</span><span class="s">近 30 天</span></div>
+          <svg width="100%" height="150" viewBox="0 0 560 150">
+            <defs>
+              <linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3b82f6" stop-opacity=".35"/><stop offset="1" stop-color="#3b82f6" stop-opacity="0"/></linearGradient>
+            </defs>
+            <g stroke="rgba(148,163,184,.12)"><line x1="0" y1="30" x2="560" y2="30"/><line x1="0" y1="70" x2="560" y2="70"/><line x1="0" y1="110" x2="560" y2="110"/></g>
+            <path d="M0 120 C40 115 60 90 100 95 C140 100 160 60 200 55 C240 50 260 80 300 72 C340 64 360 40 400 45 C440 50 460 30 500 25 C520 22 540 18 560 12 L560 150 L0 150 Z" fill="url(#area)"/>
+            <path d="M0 120 C40 115 60 90 100 95 C140 100 160 60 200 55 C240 50 260 80 300 72 C340 64 360 40 400 45 C440 50 460 30 500 25 C520 22 540 18 560 12" fill="none" stroke="#3b82f6" stroke-width="2.5"/>
+            <circle cx="500" cy="25" r="4" fill="#3b82f6" stroke="#0d1220" stroke-width="2"/>
+          </svg>
+        </div>
+        <div class="card">
+          <div class="ch"><span class="t">最近活动</span><span class="s">实时</span></div>
+          <div class="feed">
+            <div class="feed-item"><div class="av" style="background:rgba(52,211,153,.18);color:#34d399">新</div><div><b>新增订单</b> #48291 支付成功<br><span class="tm">2 分钟前</span></div></div>
+            <div class="feed-item"><div class="av" style="background:rgba(245,158,11,.18);color:#fbbf24">警</div><div><b>库存预警</b> 商品 SKU-3301 低于阈值<br><span class="tm">12 分钟前</span></div></div>
+            <div class="feed-item"><div class="av" style="background:rgba(96,165,250,.18);color:#60a5fa">入</div><div><b>新用户注册</b> user_8842 完成实名<br><span class="tm">28 分钟前</span></div></div>
+            <div class="feed-item"><div class="av" style="background:rgba(239,68,68,.18);color:#f87171">异</div><div><b>支付异常</b> 订单 #48277 需人工介入<br><span class="tm">1 小时前</span></div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="ch"><span class="t">最新订单</span><span class="s">共 48,291 条</span></div>
+        <table>
+          <tr><th>订单号</th><th>客户</th><th>商品</th><th>金额</th><th>状态</th><th>时间</th></tr>
+          <tr><td style="font-family:Menlo">#48291</td><td>林小满</td><td>无线降噪耳机 Pro</td><td>¥ 1,299</td><td><span class="st ok">已支付</span></td><td>2 分钟前</td></tr>
+          <tr><td style="font-family:Menlo">#48290</td><td>陈致远</td><td>机械键盘 87 键</td><td>¥ 899</td><td><span class="st ok">已支付</span></td><td>5 分钟前</td></tr>
+          <tr><td style="font-family:Menlo">#48289</td><td>赵思远</td><td>显示器 27寸 4K</td><td>¥ 2,499</td><td><span class="st warn">待发货</span></td><td>8 分钟前</td></tr>
+          <tr><td style="font-family:Menlo">#48288</td><td>王可欣</td><td>人体工学椅</td><td>¥ 1,680</td><td><span class="st ok">已支付</span></td><td>11 分钟前</td></tr>
+          <tr><td style="font-family:Menlo">#48287</td><td>孙浩然</td><td>智能手表 S2</td><td>¥ 1,599</td><td><span class="st err">支付失败</span></td><td>15 分钟前</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,13 +1,16 @@
 """Tests for the proxy module routing and model resolution."""
+import base64
+import io
 import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+from PIL import Image
 from app.proxy import (
     _find_model, _build_source_body, _inject_thinking_guidance, _THINKING_GUIDANCE_TEXT,
-    _build_vision_frame,
+    _build_vision_frame, _vision_usage_extra,
 )
-from app.schemas import ChatCompletionRequest, ChatMessage, EnhancedModelConfig
-from app.errors import ModelNotFoundError
+from app.schemas import ChatCompletionRequest, ChatMessage, EnhancedModelConfig, VisionProviderConfig
+from app.errors import ModelNotFoundError, VisionAnalysisError
 from app.config import get_config
 
 
@@ -109,6 +112,23 @@ class TestVisionFrame:
 TINY_PNG = ("data:image/png;base64,"
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
             "AAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+
+
+def _make_png_data_url(rgb):
+    """用 PIL 生成一张确定性的 2x2 PNG data URL（保证有效可解码）。"""
+    buf = io.BytesIO()
+    Image.new("RGB", (2, 2), rgb).save(buf, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+TINY_PNG2 = _make_png_data_url((255, 0, 0))
+
+
+def _make_big_png_data_url(size=(100, 100), rgb=(10, 20, 30)):
+    """生成 size 尺寸的 PNG data URL（grounding 裁剪需要足够大的图像）。"""
+    buf = io.BytesIO()
+    Image.new("RGB", size, rgb).save(buf, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
 class _FakeResp:
@@ -248,3 +268,726 @@ class TestCurrentImageOnly:
         joined = json.dumps(source.body["messages"], ensure_ascii=False)
         assert "image_url" not in joined
         assert "grassvision_image_context" not in joined
+
+
+class _FailingVisionClient:
+    """视觉调用总是失败的客户端，用于测试 failure_mode。"""
+
+    def __init__(self):
+        self.post_calls = []
+
+    async def post(self, url, json=None):
+        from app.errors import VisionAnalysisError
+        self.post_calls.append(json)
+        raise VisionAnalysisError("provider down")
+
+    async def aclose(self):
+        pass
+
+
+def _clear_image_cache():
+    """清空全局图片缓存，保证测试隔离。"""
+    from app.image_cache import get_image_cache
+    import asyncio
+    cache = get_image_cache()
+    asyncio.run(cache.clear())
+
+
+class TestVisionFailureMode:
+    """vision_failure_mode: error → 502；skip → 剥离图片 + 注入失败说明继续。"""
+
+    def test_error_mode_returns_502(self):
+        from app.proxy import handle_chat_completion
+        from app.config import get_config
+        _clear_image_cache()
+        cfg = get_config()
+        model = cfg.models["openai-vision"]
+        old = model.vision_failure_mode
+        model.vision_failure_mode = "error"
+        try:
+            request = ChatCompletionRequest(
+                model="openai-vision",
+                messages=[ChatMessage(role="user", content=[
+                    {"type": "image_url", "image_url": {"url": TINY_PNG}},
+                    {"type": "text", "text": "这张图是什么?"},
+                ])],
+                stream=False,
+            )
+            source = _FakeSourceClient()
+            with patch("app.vision.get_vision_client", return_value=_FailingVisionClient()), \
+                 patch("app.proxy.get_source_client", return_value=source):
+                import asyncio
+                resp = asyncio.run(handle_chat_completion(request, _RawReq()))
+            assert resp.status_code == 502, "error 模式视觉失败应返回 502"
+            assert source.body is None, "502 时不应转发源模型"
+        finally:
+            model.vision_failure_mode = old
+            _clear_image_cache()
+
+    def test_skip_mode_injects_failure_note_and_continues(self):
+        from app.proxy import handle_chat_completion
+        from app.config import get_config
+        _clear_image_cache()
+        cfg = get_config()
+        model = cfg.models["openai-vision"]
+        old = model.vision_failure_mode
+        model.vision_failure_mode = "skip"
+        try:
+            request = ChatCompletionRequest(
+                model="openai-vision",
+                messages=[ChatMessage(role="user", content=[
+                    {"type": "image_url", "image_url": {"url": TINY_PNG}},
+                    {"type": "text", "text": "这张图是什么?"},
+                ])],
+                stream=False,
+            )
+            source = _FakeSourceClient()
+            with patch("app.vision.get_vision_client", return_value=_FailingVisionClient()), \
+                 patch("app.proxy.get_source_client", return_value=source):
+                import asyncio
+                resp = asyncio.run(handle_chat_completion(request, _RawReq()))
+            assert resp.status_code == 200
+            joined = json.dumps(source.body["messages"], ensure_ascii=False)
+            assert "image_url" not in joined, "skip 模式必须先剥离 image_url"
+            assert "视觉分析失败" in joined, "skip 模式应注入失败说明（fail-open）"
+        finally:
+            model.vision_failure_mode = old
+            _clear_image_cache()
+
+
+class TestQuestionAwareCache:
+    """question_aware_cache=true：视觉模型收到真实用户问题，prompt 占位符被替换。"""
+
+    def test_prompt_contains_real_question(self):
+        from app.proxy import handle_chat_completion
+        from app.config import get_config
+        _clear_image_cache()
+        cfg = get_config()
+        old = cfg.image.question_aware_cache
+        cfg.image.question_aware_cache = True
+        try:
+            request = ChatCompletionRequest(
+                model="openai-vision",
+                messages=[ChatMessage(role="user", content=[
+                    {"type": "image_url", "image_url": {"url": TINY_PNG}},
+                    {"type": "text", "text": "这张图是什么?"},
+                ])],
+                stream=False,
+            )
+            vision = _FakeVisionClient()
+            source = _FakeSourceClient()
+            with patch("app.vision.get_vision_client", return_value=vision), \
+                 patch("app.proxy.get_source_client", return_value=source):
+                import asyncio
+                asyncio.run(handle_chat_completion(request, _RawReq()))
+            assert len(vision.post_calls) == 1
+            payload = vision.post_calls[0]
+            system_prompt = payload["messages"][0]["content"]
+            assert "这张图是什么?" in system_prompt, "视觉 prompt 应包含真实用户问题"
+            assert "{user_question}" not in system_prompt, "占位符应被替换"
+        finally:
+            cfg.image.question_aware_cache = old
+            _clear_image_cache()
+
+
+class TestHistoricalCacheReuse:
+    """reuse_historical_cache=true：历史图片缓存命中 → 描述原地注入，不触发新分析。"""
+
+    def test_historical_image_uses_cached_description(self):
+        from app.proxy import handle_chat_completion
+        from app.config import get_config
+        _clear_image_cache()
+        cfg = get_config()
+        old = cfg.image.reuse_historical_cache
+        cfg.image.reuse_historical_cache = True
+        try:
+            # 请求 1：图片在当前轮 → 分析并写入缓存
+            request1 = ChatCompletionRequest(
+                model="openai-vision",
+                messages=[ChatMessage(role="user", content=[
+                    {"type": "image_url", "image_url": {"url": TINY_PNG}},
+                    {"type": "text", "text": "看这张图"},
+                ])],
+                stream=False,
+            )
+            vision = _FakeVisionClient()
+            source = _FakeSourceClient()
+            with patch("app.vision.get_vision_client", return_value=vision), \
+                 patch("app.proxy.get_source_client", return_value=source):
+                import asyncio
+                asyncio.run(handle_chat_completion(request1, _RawReq()))
+            assert len(vision.post_calls) == 1
+
+            # 请求 2：同一张图变为历史（assistant 之后是纯文字追问）→ 缓存命中
+            request2 = ChatCompletionRequest(
+                model="openai-vision",
+                messages=[
+                    ChatMessage(role="user", content=[
+                        {"type": "image_url", "image_url": {"url": TINY_PNG}},
+                        {"type": "text", "text": "看这张图"},
+                    ]),
+                    ChatMessage(role="assistant", content="看到了。"),
+                    ChatMessage(role="user", content="继续解释一下"),
+                ],
+                stream=False,
+            )
+            vision2 = _FakeVisionClient()
+            source2 = _FakeSourceClient()
+            with patch("app.vision.get_vision_client", return_value=vision2), \
+                 patch("app.proxy.get_source_client", return_value=source2):
+                import asyncio
+                asyncio.run(handle_chat_completion(request2, _RawReq()))
+            assert vision2.post_calls == [], "历史图片缓存命中不应触发新的视觉调用"
+            joined = json.dumps(source2.body["messages"], ensure_ascii=False)
+            assert "测试描述" in joined, "历史图片的缓存描述应原地注入"
+            assert "image_url" not in joined
+        finally:
+            cfg.image.reuse_historical_cache = old
+            _clear_image_cache()
+
+
+class TestToolRoleImages:
+    """role=tool 消息中的图片（agent 工具返回截图）应视为当前图片并分析。"""
+
+    def test_tool_message_image_is_analyzed(self):
+        from app.proxy import handle_chat_completion
+        request = ChatCompletionRequest(
+            model="openai-vision",
+            messages=[
+                ChatMessage(role="user", content="请打开浏览器截图"),
+                ChatMessage(role="assistant", content=None, tool_calls=[
+                    {"id": "c1", "type": "function",
+                     "function": {"name": "browse", "arguments": "{}"}},
+                ]),
+                ChatMessage(role="tool", tool_call_id="c1", content=[
+                    {"type": "image_url", "image_url": {"url": TINY_PNG}},
+                ]),
+            ],
+            stream=False,
+        )
+        vision = _FakeVisionClient()
+        source = _FakeSourceClient()
+        with patch("app.vision.get_vision_client", return_value=vision), \
+             patch("app.proxy.get_source_client", return_value=source):
+            import asyncio
+            asyncio.run(handle_chat_completion(request, _RawReq()))
+        assert len(vision.post_calls) == 1, "tool 消息图片应触发视觉分析"
+        joined = json.dumps(source.body["messages"], ensure_ascii=False)
+        assert "测试描述" in joined, "tool 图片的描述应注入"
+        assert "image_url" not in joined
+
+
+class TestMultiImageCombined:
+    """multi_image_mode=combined：多图合并为一次视觉调用，结果去重注入。"""
+
+    def test_two_images_one_vision_call(self):
+        from app.proxy import handle_chat_completion
+        from app.config import get_config
+        _clear_image_cache()
+        cfg = get_config()
+        old = cfg.image.multi_image_mode
+        cfg.image.multi_image_mode = "combined"
+        try:
+            request = ChatCompletionRequest(
+                model="openai-vision",
+                messages=[ChatMessage(role="user", content=[
+                    {"type": "image_url", "image_url": {"url": TINY_PNG}},
+                    {"type": "image_url", "image_url": {"url": TINY_PNG2}},
+                    {"type": "text", "text": "对比这两张图"},
+                ])],
+                stream=False,
+            )
+            vision = _FakeVisionClient()
+            source = _FakeSourceClient()
+            with patch("app.vision.get_vision_client", return_value=vision), \
+                 patch("app.proxy.get_source_client", return_value=source):
+                import asyncio
+                asyncio.run(handle_chat_completion(request, _RawReq()))
+            assert len(vision.post_calls) == 1, "联合分析应只有一次视觉调用"
+            payload = vision.post_calls[0]
+            image_parts = [p for p in payload["messages"][1]["content"]
+                           if p.get("type") == "image_url"]
+            assert len(image_parts) == 2, "一次调用应同时携带两张图"
+            joined = json.dumps(source.body["messages"], ensure_ascii=False)
+            assert "测试描述" in joined
+            assert "image_url" not in joined
+        finally:
+            cfg.image.multi_image_mode = old
+            _clear_image_cache()
+
+    def test_auto_mode_combines_on_comparison_intent(self):
+        from app.proxy import handle_chat_completion
+        from app.config import get_config
+        from app.vision import _detect_comparison_intent
+        assert _detect_comparison_intent("对比这两张图有什么区别")
+        assert _detect_comparison_intent("which one is better?")
+        assert not _detect_comparison_intent("描述这张图片")
+
+
+class _FailoverVisionClient:
+    """第一次调用失败、第二次成功，用于测试故障转移。"""
+
+    def __init__(self):
+        self.calls = 0
+
+    async def post(self, url, json=None):
+        self.calls += 1
+        if self.calls == 1:
+            raise VisionAnalysisError("primary provider down")
+        return _FakeResp(200, {"choices": [{"message": {"content": "failover 描述"}}],
+                               "usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5}})
+
+    async def aclose(self):
+        pass
+
+
+class TestVisionFailover:
+    """vision_provider_failover：主渠道失败自动切换到备用渠道。"""
+
+    def test_failover_uses_backup_provider(self):
+        from app.proxy import handle_chat_completion
+        from app.config import get_config
+        _clear_image_cache()
+        cfg = get_config()
+        model = cfg.models["openai-vision"]
+        old_failover = model.vision_provider_failover
+        old_providers = dict(cfg.vision_providers)
+        model.vision_provider_failover = ["openai-backup"]
+        cfg.vision_providers["openai-backup"] = VisionProviderConfig(
+            name="openai-backup", enabled=True,
+            base_url="https://example.com/v1", api_key="k", model="backup-vl",
+        )
+        try:
+            request = ChatCompletionRequest(
+                model="openai-vision",
+                messages=[ChatMessage(role="user", content=[
+                    {"type": "image_url", "image_url": {"url": TINY_PNG}},
+                    {"type": "text", "text": "这张图是什么?"},
+                ])],
+                stream=False,
+            )
+            vision = _FailoverVisionClient()
+            source = _FakeSourceClient()
+            with patch("app.vision.get_vision_client", return_value=vision), \
+                 patch("app.proxy.get_source_client", return_value=source):
+                import asyncio
+                resp = asyncio.run(handle_chat_completion(request, _RawReq()))
+            assert resp.status_code == 200
+            assert vision.calls == 2, "主渠道失败后应尝试备用渠道"
+            joined = json.dumps(source.body["messages"], ensure_ascii=False)
+            assert "failover 描述" in joined, "应注入备用渠道的分析结果"
+        finally:
+            model.vision_provider_failover = old_failover
+            cfg.vision_providers = old_providers
+            _clear_image_cache()
+
+
+class TestUsageTransparency:
+    """响应 usage 应透传视觉模型 token（vision_* 前缀，不覆盖标准字段）。"""
+
+    def test_non_stream_usage_contains_vision_tokens(self):
+        from app.proxy import handle_chat_completion
+        from app.config import get_config
+        _clear_image_cache()
+        cfg = get_config()
+        try:
+            request = ChatCompletionRequest(
+                model="openai-vision",
+                messages=[ChatMessage(role="user", content=[
+                    {"type": "image_url", "image_url": {"url": TINY_PNG}},
+                    {"type": "text", "text": "这张图是什么?"},
+                ])],
+                stream=False,
+            )
+            vision = _FakeVisionClient()
+            source = _FakeSourceClient()
+            with patch("app.vision.get_vision_client", return_value=vision), \
+                 patch("app.proxy.get_source_client", return_value=source):
+                import asyncio
+                resp = asyncio.run(handle_chat_completion(request, _RawReq()))
+            data = json.loads(resp.body)
+            usage = data["usage"]
+            assert usage.get("vision_prompt_tokens") == 10
+            assert usage.get("vision_total_tokens") == 15
+            assert _vision_usage_extra(None) is None
+            assert _vision_usage_extra({}) is None
+        finally:
+            _clear_image_cache()
+
+
+class _ScriptedVisionClient:
+    """按顺序返回预设结果的视觉客户端（用于 grounding/长截图多阶段测试）。"""
+
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.post_calls = []
+        self.calls = 0
+
+    async def post(self, url, json=None):
+        self.post_calls.append(json)
+        resp_text = self.responses[min(self.calls, len(self.responses) - 1)]
+        self.calls += 1
+        return _FakeResp(200, {"choices": [{"message": {"content": resp_text}}], "usage": {}})
+
+    async def aclose(self):
+        pass
+
+
+class TestGroundingZoom:
+    """grounding_zoom：先定位坐标框，再裁剪放大二次精读。"""
+
+    def test_two_stage_grounding_and_zoom(self):
+        from app.proxy import handle_chat_completion
+        from app.config import get_config
+        _clear_image_cache()
+        cfg = get_config()
+        model = cfg.models["openai-vision"]
+        old = model.grounding_zoom
+        model.grounding_zoom = True
+        try:
+            request = ChatCompletionRequest(
+                model="openai-vision",
+                messages=[ChatMessage(role="user", content=[
+                    {"type": "image_url", "image_url": {"url": _make_big_png_data_url()}},
+                    {"type": "text", "text": "这个按钮的颜色是什么?"},
+                ])],
+                stream=False,
+            )
+            # 调用 1：单图初步分析；调用 2（定位）：返回坐标框；调用 3（放大精读）：返回细节
+            vision = _ScriptedVisionClient([
+                "初步描述",
+                "x1: 100\ny1: 200\nx2: 300\ny2: 400",
+                "放大后的按钮是蓝色的。",
+            ])
+            source = _FakeSourceClient()
+            with patch("app.vision.get_vision_client", return_value=vision), \
+                 patch("app.proxy.get_source_client", return_value=source):
+                import asyncio
+                asyncio.run(handle_chat_completion(request, _RawReq()))
+            assert vision.calls == 3, "grounding 应触发三次视觉调用（初析 + 定位 + 放大）"
+            joined = json.dumps(source.body["messages"], ensure_ascii=False)
+            assert "目标元素放大分析" in joined
+            assert "蓝色" in joined
+            assert "x1=100" in joined
+        finally:
+            model.grounding_zoom = old
+            _clear_image_cache()
+
+    def test_no_grounding_without_element_intent(self):
+        from app.proxy import handle_chat_completion
+        from app.config import get_config
+        from app.vision import _has_grounding_intent
+        assert _has_grounding_intent("这个按钮在哪")
+        assert _has_grounding_intent("click the button")
+        assert not _has_grounding_intent("描述整张图的氛围")
+        _clear_image_cache()
+        cfg = get_config()
+        model = cfg.models["openai-vision"]
+        old = model.grounding_zoom
+        model.grounding_zoom = True
+        try:
+            request = ChatCompletionRequest(
+                model="openai-vision",
+                messages=[ChatMessage(role="user", content=[
+                    {"type": "image_url", "image_url": {"url": _make_big_png_data_url()}},
+                    {"type": "text", "text": "描述整张图的氛围"},
+                ])],
+                stream=False,
+            )
+            vision = _FakeVisionClient()
+            source = _FakeSourceClient()
+            with patch("app.vision.get_vision_client", return_value=vision), \
+                 patch("app.proxy.get_source_client", return_value=source):
+                import asyncio
+                asyncio.run(handle_chat_completion(request, _RawReq()))
+            assert len(vision.post_calls) == 1, "无元素意图不应触发 grounding 二次调用"
+        finally:
+            model.grounding_zoom = old
+            _clear_image_cache()
+
+
+class TestLongScreenshotOCR:
+    """long_screenshot_ocr：高宽比≥3 的长截图自动分段分析合并。"""
+
+    def _tall_png(self, height=2400, width=200):
+        import io
+        from PIL import Image
+        buf = io.BytesIO()
+        Image.new("RGB", (width, height), (255, 255, 255)).save(buf, format="PNG")
+        return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+    def test_tall_image_sliced_into_bands(self):
+        from app.proxy import handle_chat_completion
+        from app.config import get_config
+        _clear_image_cache()
+        cfg = get_config()
+        old = cfg.image.long_screenshot_ocr
+        cfg.image.long_screenshot_ocr = True
+        try:
+            tall = self._tall_png(height=2400, width=200)
+            request = ChatCompletionRequest(
+                model="openai-vision",
+                messages=[ChatMessage(role="user", content=[
+                    {"type": "image_url", "image_url": {"url": tall}},
+                    {"type": "text", "text": "提取这段聊天记录"},
+                ])],
+                stream=False,
+            )
+            # 第一次调用：单图分析；之后每段一次调用
+            vision = _ScriptedVisionClient(["初始描述", "第1段内容", "第2段内容", "第3段内容"])
+            source = _FakeSourceClient()
+            with patch("app.vision.get_vision_client", return_value=vision), \
+                 patch("app.proxy.get_source_client", return_value=source):
+                import asyncio
+                asyncio.run(handle_chat_completion(request, _RawReq()))
+            assert vision.calls >= 3, "长截图应产生多次分段调用"
+            joined = json.dumps(source.body["messages"], ensure_ascii=False)
+            assert "分段分析" in joined
+            assert "第 1 段" in joined
+            assert "第 2 段" in joined
+        finally:
+            cfg.image.long_screenshot_ocr = old
+            _clear_image_cache()
+
+    def test_square_image_not_sliced(self):
+        from app.proxy import handle_chat_completion
+        from app.config import get_config
+        _clear_image_cache()
+        cfg = get_config()
+        old = cfg.image.long_screenshot_ocr
+        cfg.image.long_screenshot_ocr = True
+        try:
+            request = ChatCompletionRequest(
+                model="openai-vision",
+                messages=[ChatMessage(role="user", content=[
+                    {"type": "image_url", "image_url": {"url": TINY_PNG}},
+                    {"type": "text", "text": "看这张图"},
+                ])],
+                stream=False,
+            )
+            vision = _FakeVisionClient()
+            source = _FakeSourceClient()
+            with patch("app.vision.get_vision_client", return_value=vision), \
+                 patch("app.proxy.get_source_client", return_value=source):
+                import asyncio
+                asyncio.run(handle_chat_completion(request, _RawReq()))
+            assert len(vision.post_calls) == 1, "普通图片不应切片"
+        finally:
+            cfg.image.long_screenshot_ocr = old
+            _clear_image_cache()
+
+
+class TestVisionMaxTokens:
+    """视觉渠道 max_tokens 配置生效。"""
+
+    def test_payload_uses_configured_max_tokens(self):
+        from app.vision import _call_vision_model
+        from app.config import get_config
+        cfg = get_config()
+        provider = cfg.vision_providers["openai"]
+        old = provider.max_tokens
+        provider.max_tokens = 8192
+        try:
+            vision = _FakeVisionClient()
+            with patch("app.vision.get_vision_client", return_value=vision):
+                import asyncio
+                asyncio.run(_call_vision_model(
+                    provider_id="openai", model_id="", system_prompt="s",
+                    user_question="q", image_urls=[TINY_PNG],
+                ))
+            assert vision.post_calls[0]["max_tokens"] == 8192
+        finally:
+            provider.max_tokens = old
+
+
+class TestStructuredEvidence:
+    """structured_evidence：视觉 JSON 证据解析、格式化、注入。"""
+
+    def test_structure_formats_json_evidence(self):
+        from app.vision import _structure_evidence
+        json_text = json.dumps({
+            "summary": "一张登录页截图",
+            "ocr": {"full_text": "用户名\n密码\n登录"},
+            "layout": {"regions": [
+                {"type": "form", "reading_order": 1, "text": "用户名输入框"},
+                {"type": "button", "reading_order": 2, "text": "登录"},
+            ]},
+            "semantics": {"scene": "登录页", "entities": [
+                {"name": "登录按钮", "type": "button", "evidence": "底部"},
+            ]},
+            "visual": {"dominant_colors": ["#ffffff"], "style": "简洁"},
+            "uncertainty": ["密码框文字模糊"],
+        }, ensure_ascii=False)
+        formatted = _structure_evidence(json_text)
+        assert formatted is not None
+        assert "【摘要】" in formatted and "登录页" in formatted
+        assert "【全文文字】" in formatted and "用户名" in formatted
+        assert "【版面结构】" in formatted
+        assert "【关键实体】" in formatted and "登录按钮" in formatted
+        assert "【不确定项 ⚠️】" in formatted and "模糊" in formatted
+
+    def test_structure_tolerates_markdown_fence(self):
+        from app.vision import _structure_evidence
+        fenced = '```json\n{"summary": "图", "ocr": {"full_text": "abc"}, "uncertainty": []}\n```'
+        formatted = _structure_evidence(fenced)
+        assert formatted is not None and "abc" in formatted
+
+    def test_structure_returns_none_for_invalid(self):
+        from app.vision import _structure_evidence
+        assert _structure_evidence("这不是 JSON") is None
+        assert _structure_evidence("") is None
+        assert _structure_evidence("普通描述文字") is None
+
+    def test_structured_evidence_injected_end_to_end(self):
+        from app.proxy import handle_chat_completion
+        from app.config import get_config
+        _clear_image_cache()
+        cfg = get_config()
+        model = cfg.models["openai-vision"]
+        old = model.structured_evidence
+        model.structured_evidence = True
+        try:
+            request = ChatCompletionRequest(
+                model="openai-vision",
+                messages=[ChatMessage(role="user", content=[
+                    {"type": "image_url", "image_url": {"url": TINY_PNG}},
+                    {"type": "text", "text": "这是什么页面?"},
+                ])],
+                stream=False,
+            )
+            evidence_json = json.dumps({
+                "summary": "一个登录页面",
+                "ocr": {"full_text": "欢迎回来"},
+                "uncertainty": ["右上角图标不清晰"],
+            }, ensure_ascii=False)
+            vision = _ScriptedVisionClient([evidence_json])
+            source = _FakeSourceClient()
+            with patch("app.vision.get_vision_client", return_value=vision), \
+                 patch("app.proxy.get_source_client", return_value=source):
+                import asyncio
+                asyncio.run(handle_chat_completion(request, _RawReq()))
+            joined = json.dumps(source.body["messages"], ensure_ascii=False)
+            assert "【摘要】" in joined
+            assert "【不确定项 ⚠️】" in joined
+            assert "欢迎回来" in joined
+        finally:
+            model.structured_evidence = old
+            _clear_image_cache()
+
+
+class _FakeStreamCtx:
+    def __init__(self, resp):
+        self._resp = resp
+
+    async def __aenter__(self):
+        return self._resp
+
+    async def __aexit__(self, *a):
+        return False
+
+
+class _FakeStreamResp:
+    status_code = 200
+
+    def __init__(self, lines):
+        self._lines = list(lines)
+
+    async def aiter_lines(self):
+        for ln in self._lines:
+            yield ln
+
+
+class _FakeStreamingSource:
+    """模拟源模型流式 SSE 响应（思考链 + 回答 + usage + DONE）。"""
+
+    def __init__(self):
+        self.body = None
+        self.lines = [
+            'data: {"choices":[{"delta":{"role":"assistant","reasoning_content":"源模型思考中"}}]}',
+            'data: {"choices":[{"delta":{"content":"源模型回答"}}]}',
+            'data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}',
+            'data: [DONE]',
+        ]
+
+    def stream(self, method, url, json=None):
+        self.body = json
+        return _FakeStreamCtx(_FakeStreamResp(self.lines))
+
+
+async def _fake_vision_stream(provider_id, model_id, system_prompt, user_question,
+                              image_urls, request_client=None, emit=None):
+    """模拟视觉模型流式输出：先 reasoning 后 content。"""
+    await emit("reasoning", "我先分析这张图片…")
+    await emit("content", "这是分析结果正文")
+    return {"result": "这是分析结果正文", "model": "m", "elapsed": 0, "token_usage": {}}
+
+
+class TestStreamVisionThinking:
+    """流式视觉思考链：首帧即真实思考（默认无预提示），reasoning/content 都进思考链，
+    再无缝衔接源模型思考链与回答。"""
+
+    def _collect(self, prelude, cfg):
+        from app.proxy import _combined_stream
+        from app.image_utils import extract_all_images_with_positions, extract_current_turn_positions
+        request = ChatCompletionRequest(
+            model="openai-vision",
+            messages=[ChatMessage(role="user", content=[
+                {"type": "image_url", "image_url": {"url": TINY_PNG}},
+                {"type": "text", "text": "这张图是什么?"},
+            ])],
+            stream=True,
+        )
+        raw = [m.model_dump(exclude_none=True) for m in request.messages]
+        imgs = extract_all_images_with_positions(raw)
+        cur = extract_current_turn_positions(raw)
+        source = _FakeStreamingSource()
+        old = cfg.image.vision_stream_prelude
+        cfg.image.vision_stream_prelude = prelude
+        try:
+            import asyncio
+
+            async def collect():
+                frames = []
+                async for frame in _combined_stream(
+                    request, cfg.models["openai-vision"], raw,
+                    [i for i in imgs if i.position in cur], cur, _RawReq(),
+                ):
+                    frames.append(frame)
+                return frames
+
+            with patch("app.vision._call_vision_model_stream", new=_fake_vision_stream), \
+                 patch("app.proxy.get_source_client", return_value=source):
+                return asyncio.run(collect())
+        finally:
+            cfg.image.vision_stream_prelude = old
+
+    def test_first_frame_is_real_reasoning(self):
+        from app.config import get_config
+        _clear_image_cache()
+        cfg = get_config()
+        try:
+            frames = self._collect(prelude=False, cfg=cfg)
+            all_text = "".join(frames)
+            assert "正在处理" not in all_text, "默认不应有占位预提示"
+            assert "我先分析这张图片" in all_text, "视觉模型 reasoning 应进入思考链"
+            assert "这是分析结果正文" in all_text, "视觉模型 content 应进入思考链"
+            assert "源模型思考中" in all_text, "源模型思考链应透传"
+            assert "源模型回答" in all_text
+            # 首帧就是视觉模型的真实思考链
+            first_data = json.loads(frames[0][6:].strip())
+            delta = first_data["choices"][0]["delta"]
+            assert delta.get("role") == "assistant"
+            assert "我先分析这张图片" in delta.get("reasoning_content", "")
+        finally:
+            _clear_image_cache()
+
+    def test_prelude_optional(self):
+        from app.config import get_config
+        _clear_image_cache()
+        cfg = get_config()
+        try:
+            frames = self._collect(prelude=True, cfg=cfg)
+            first_data = json.loads(frames[0][6:].strip())
+            assert "正在处理" in first_data["choices"][0]["delta"].get("reasoning_content", "")
+        finally:
+            _clear_image_cache()

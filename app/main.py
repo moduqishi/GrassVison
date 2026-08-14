@@ -56,11 +56,25 @@ async def lifespan(app: FastAPI):
     try:
         reload_config()
         setup_logging()
+        # 启动时加载图片缓存快照（服务重启后多轮追问仍能命中）
+        try:
+            from app.image_cache import get_image_cache
+            cache = get_image_cache()
+            await cache.load_snapshot()
+        except Exception:
+            pass
         logging.getLogger("grassvision").info("GrassVision started")
     except Exception as e:
         print(f"FATAL: Failed to load config: {e}", file=sys.stderr)
     yield
     logging.getLogger("grassvision").info("GrassVision shutting down")
+    try:
+        from app.image_cache import get_image_cache
+        await get_image_cache().save_snapshot()
+    except Exception:
+        pass
+    from app.providers import clear_client_pool
+    clear_client_pool()
     flush_stats()
 
 

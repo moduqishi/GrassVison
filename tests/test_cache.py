@@ -135,3 +135,48 @@ async def test_stats(cache):
     assert s["misses"] == 1
     assert s["size"] == 1
     assert s["vision_calls_saved"] == 1
+
+
+class TestSnapshotPersistence:
+    """缓存磁盘快照：重启后条目仍可命中。"""
+
+    def test_snapshot_roundtrip(self, tmp_path, monkeypatch):
+        import time
+        from app.image_cache import ImageCache, CacheEntry
+        monkeypatch.setattr("app.image_cache.SNAPSHOT_PATH", tmp_path / "vc.json")
+
+        cache1 = ImageCache(enabled=True, ttl_seconds=3600, max_entries=10)
+        now = time.monotonic()
+        entry = CacheEntry(
+            result="描述文本", content_hash="h1", provider_id="p", model_id="m",
+            prompt_hash="ph", analysis_mode="independent",
+            created_at=now, expires_at=now + 100,
+        )
+        asyncio.run(cache1.set("key1", entry))
+        asyncio.run(cache1.save_snapshot())
+
+        cache2 = ImageCache(enabled=True, ttl_seconds=3600, max_entries=10)
+        asyncio.run(cache2.load_snapshot())
+        got, status = asyncio.run(cache2.get_or_reserve("key1"))
+        assert status == "cached"
+        assert got.result == "描述文本"
+
+    def test_expired_entry_not_loaded(self, tmp_path, monkeypatch):
+        import time
+        from app.image_cache import ImageCache, CacheEntry
+        monkeypatch.setattr("app.image_cache.SNAPSHOT_PATH", tmp_path / "vc.json")
+
+        cache1 = ImageCache(enabled=True, ttl_seconds=3600, max_entries=10)
+        now = time.monotonic()
+        entry = CacheEntry(
+            result="过期内容", content_hash="h2", provider_id="p", model_id="m",
+            prompt_hash="ph", analysis_mode="independent",
+            created_at=now - 200, expires_at=now - 100,
+        )
+        asyncio.run(cache1.set("key2", entry))
+        asyncio.run(cache1.save_snapshot())
+
+        cache2 = ImageCache(enabled=True, ttl_seconds=3600, max_entries=10)
+        asyncio.run(cache2.load_snapshot())
+        got, status = asyncio.run(cache2.get_or_reserve("key2"))
+        assert status == "owner", "已过期的条目不应从快照加载"

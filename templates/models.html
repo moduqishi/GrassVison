@@ -170,6 +170,25 @@
                                             <p class="hint" x-text="visionModelCount"></p>
                                         </div>
                                     </div>
+                                    <div class="form-group">
+                                        <label>故障转移渠道（逗号分隔）</label>
+                                        <input class="input" :value="(form.vision_provider_failover||[]).join(', ')" @input="form.vision_provider_failover = $event.target.value.split(',').map(s=>s.trim()).filter(Boolean)" placeholder="例如：vivo, openai">
+                                        <p class="hint">主视觉渠道失败时按序自动切换，全部失败才报错</p>
+                                    </div>
+                                    <div class="switch-row" style="margin-top:12px;margin-bottom:0">
+                                        <div>
+                                            <div class="switch-label">定位-放大-再读</div>
+                                            <div class="switch-desc">问题针对具体 UI 元素（按钮/输入框/图标等）时，先定位坐标框，再裁剪放大做二次精读（多 1-2 次视觉调用）</div>
+                                        </div>
+                                        <label class="switch"><input type="checkbox" x-model="form.grounding_zoom"><span class="track"></span></label>
+                                    </div>
+                                    <div class="switch-row" style="margin-top:12px;margin-bottom:0">
+                                        <div>
+                                            <div class="switch-label">结构化证据输出</div>
+                                            <div class="switch-desc">视觉模型返回 JSON 证据（摘要/全文/版面/实体/不确定项），格式化后注入，不确定项单独标注防幻觉</div>
+                                        </div>
+                                        <label class="switch"><input type="checkbox" x-model="form.structured_evidence"><span class="track"></span></label>
+                                    </div>
                                     <div class="form-grid">
                                         <div class="form-group">
                                             <label>视觉提示词</label>
@@ -230,7 +249,7 @@ function modelManager() {
         sourceKeys:{{ source_keys | tojson }}, visionKeys:{{ vision_keys | tojson }}, promptFiles:{{ prompt_files | tojson }},
         sourceModels:{}, visionModels:{}, sourceLoading:false, visionLoading:false,
 
-        form:{model_id:'',name:'',source_provider:'',source_model:'',vision_enabled:false,vision_provider:'',vision_model:'',vision_prompt:'prompts/default.txt',cache_prompt:null,vision_failure_mode:'error',replace_response_model:true,enabled:true},
+        form:{model_id:'',name:'',source_provider:'',source_model:'',vision_enabled:false,vision_provider:'',vision_model:'',vision_prompt:'prompts/default.txt',cache_prompt:null,vision_failure_mode:'error',replace_response_model:true,enabled:true,vision_provider_failover:[],grounding_zoom:false,structured_evidence:false},
 
         get sourceModelCount(){
             const arr=this.sourceModels[this.form.source_provider];
@@ -244,7 +263,7 @@ function modelManager() {
         async init(){ const d=await api('GET','/api/admin/models'); this.models=d.models||{}; },
         openCreate(){
             this.editing=false;
-            this.form={model_id:'',name:'',source_provider:'',source_model:'',vision_enabled:false,vision_provider:'',vision_model:'',vision_prompt:'prompts/default.txt',cache_prompt:null,vision_failure_mode:'error',replace_response_model:true,enabled:true};
+            this.form={model_id:'',name:'',source_provider:'',source_model:'',vision_enabled:false,vision_provider:'',vision_model:'',vision_prompt:'prompts/default.txt',cache_prompt:null,vision_failure_mode:'error',replace_response_model:true,enabled:true,vision_provider_failover:[],grounding_zoom:false,structured_evidence:false};
             this.showModal=true;
             this.$nextTick(()=>{ if(this.$refs.firstInput) this.$refs.firstInput.focus(); });
         },

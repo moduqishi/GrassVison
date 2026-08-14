@@ -15,7 +15,8 @@ from PIL import Image, ImageOps
 from app.config import get_config
 from app.errors import ImageError
 
-DATA_URL_RE = re.compile(r"^data:(image/\w+);base64,(.+)$", re.IGNORECASE)
+# 允许 image/svg+xml、image/heic 等带扩展名的 MIME（\w+ 匹配不了 +）
+DATA_URL_RE = re.compile(r"^data:(image/[a-z0-9.+-]+);base64,(.+)$", re.IGNORECASE)
 
 IMG_SIGNATURES = {
     b"\x89PNG\r\n\x1a\n": "png",
@@ -24,6 +25,9 @@ IMG_SIGNATURES = {
     b"GIF89a": "gif",
     b"RIFF": "webp",
     b"<svg": "svg+xml",
+    b"BM": "bmp",
+    b"II*\x00": "tiff",
+    b"MM\x00*": "tiff",
 }
 
 PREPROCESS_VERSION = "jpeg-rgb-2048-q90-v1"
@@ -120,7 +124,8 @@ def extract_images_from_last_user_message(messages: list[dict]) -> set[ImagePosi
 def extract_current_turn_positions(messages: list[dict]) -> set[ImagePosition]:
     """返回「当前轮次」的图片位置。
 
-    当前轮次 = 最后一次 assistant 消息之后的全部消息（含多条连续用户消息）。
+    当前轮次 = 最后一次 assistant 消息之后的全部消息（含多条连续用户消息，
+    以及 role=tool 的工具返回消息——浏览器工具返回截图等 agent 场景）。
     兼容客户端把「图片」和「文字」分成两条用户消息发送的情况；
     最后一次 assistant 回复之前的图片视为历史，不再处理。
     """
@@ -128,7 +133,7 @@ def extract_current_turn_positions(messages: list[dict]) -> set[ImagePosition]:
     for i in range(len(messages) - 1, -1, -1):
         if messages[i].get("role") == "assistant":
             break
-        if messages[i].get("role") != "user":
+        if messages[i].get("role") not in ("user", "tool"):
             continue
         content = messages[i].get("content")
         if not isinstance(content, list):
@@ -268,7 +273,9 @@ async def fetch_image_bytes(url: str, client: httpx.AsyncClient | None = None) -
     cfg = get_config().image
     own_client = client is None
     if own_client:
-        client = httpx.AsyncClient(timeout=cfg.download_timeout)
+        # 池化通用下载客户端（连接复用，由 providers 池统一管理）
+        from app.providers import get_download_client
+        client = get_download_client(cfg.download_timeout)
 
     try:
         if not cfg.allow_private_network:
@@ -289,9 +296,6 @@ async def fetch_image_bytes(url: str, client: httpx.AsyncClient | None = None) -
         return data
     except httpx.TimeoutException:
         raise ImageError(f"Image download timed out: {url}")
-    finally:
-        if own_client:
-            await client.aclose()
 
 
 def decode_base64_image(data_url: str) -> tuple[bytes, str]:
@@ -338,13 +342,45 @@ def validate_image_dimensions(data: bytes) -> None:
         raise ImageError(f"Image dimensions ({w}x{h}) exceed limit ({cfg.max_width}x{cfg.max_height})")
 
 
+def downscale_image_if_needed(data: bytes) -> tuple[bytes, str]:
+    """尺寸超限时降采样（LANCZOS），返回 (新字节, mime)。
+
+    - 不超限或无法解码（SVG 等）时原样返回，mime 为空串表示未变化。
+    - 替代"直接拒绝"：与原生多模态一致，大图降采样后仍可分析。
+    """
+    cfg = get_config().image
+    w, h = get_image_dimensions(data)
+    if w == 0 or h == 0:
+        return data, ""
+    if w <= cfg.max_width and h <= cfg.max_height:
+        return data, ""
+    try:
+        img = Image.open(io.BytesIO(data))
+        img = ImageOps.exif_transpose(img)
+        ratio = min(cfg.max_width / img.width, cfg.max_height / img.height, 1.0)
+        if ratio >= 1.0:
+            return data, ""
+        img = img.resize((max(1, int(img.width * ratio)), max(1, int(img.height * ratio))), Image.LANCZOS)
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90)
+        return buf.getvalue(), "image/jpeg"
+    except Exception:
+        return data, ""
+
+
 async def resolve_image_to_base64(url: str, client: httpx.AsyncClient | None = None) -> str:
     if url.startswith("data:"):
         data, mime = decode_base64_image(url)
-        validate_image_dimensions(data)
+        data, new_mime = downscale_image_if_needed(data)
+        if new_mime:
+            # 已降采样：重新编码为 JPEG data URL
+            b64 = base64.b64encode(data).decode("ascii")
+            return f"data:{new_mime};base64,{b64}"
         return url
     data = await fetch_image_bytes(url, client)
-    validate_image_dimensions(data)
+    data, new_mime = downscale_image_if_needed(data)
     mime = "image/png"
     for sig, fmt in IMG_SIGNATURES.items():
         if data[:len(sig)] == sig:
@@ -352,5 +388,7 @@ async def resolve_image_to_base64(url: str, client: httpx.AsyncClient | None = N
             if fmt == "svg+xml":
                 mime = "image/svg+xml"
             break
+    if new_mime:
+        mime = new_mime
     b64 = base64.b64encode(data).decode("ascii")
     return f"data:{mime};base64,{b64}"

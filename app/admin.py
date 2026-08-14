@@ -215,8 +215,7 @@ async def fetch_source_models(key: str):
         return {"ok": True, "models": model_ids}
     except Exception as e:
         return {"ok": True, "models": [], "error": str(e)}
-    finally:
-        await client.aclose()
+    # 连接池化：client 由 providers 池统一管理，不在调用点关闭
 
 
 # ── Vision Providers ─────────────────────────────────────────────
@@ -318,8 +317,7 @@ async def fetch_vision_models(key: str):
         return {"ok": True, "models": model_ids}
     except Exception as e:
         return {"ok": True, "models": [], "error": str(e)}
-    finally:
-        await client.aclose()
+    # 连接池化：client 由 providers 池统一管理，不在调用点关闭
 
 
 # ── Enhanced Models ──────────────────────────────────────────────
