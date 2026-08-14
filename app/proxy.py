@@ -619,7 +619,8 @@ async def handle_chat_completion(
                     source_tokens=usage,
                 )
             if model.vision_enabled and cfg.image.vision_reexamine:
-                # 无图流式：注入工具，允许源模型重看历史图片（跨轮次无感重看）
+                # 无图流式：注入工具，允许源模型重看历史图片（跨轮次无感重看）。
+                # stream_vision=True：跨轮重看的思考链也始终流式透传。
                 body = _inject_view_image_tool(body)
                 return StreamingResponse(
                     _stream_with_reexamine(
@@ -630,6 +631,7 @@ async def handle_chat_completion(
                         images=all_images,
                         raw_request=raw_request,
                         on_usage=_on_noimg_usage,
+                        stream_vision=True,
                     ),
                     media_type="text/event-stream",
                     headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
@@ -1038,7 +1040,9 @@ async def _combined_stream(
         )
 
     if cfg.image.vision_reexamine:
-        # 融合版阶段 2：源模型流 + 服务端重看（工具轮吞掉、重看增量流式推送）
+        # 融合版阶段 2：源模型流 + 服务端重看（工具轮吞掉、重看增量流式推送）。
+        # stream_vision 恒 True：重看是"源模型主动再看一眼"的过程，思考链始终透传，
+        # 不依赖首次视觉思考开关（stream_vision_thinking 只控制阶段 1 的可视化）。
         body = _inject_view_image_tool(body)
         async for line in _stream_with_reexamine(
             body=body,
@@ -1049,7 +1053,7 @@ async def _combined_stream(
             raw_request=raw_request,
             on_usage=_on_source_usage,
             extra_usage=_vision_usage_extra(vision_usage),
-            stream_vision=vision_stream_on,
+            stream_vision=True,
             stream_id=stream_id,
             is_first=is_first,
         ):

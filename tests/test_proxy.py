@@ -1204,7 +1204,9 @@ class TestStreamReexamine:
             )
             vision = _FakeVisionClient()
             source = _ScriptedToolStreamSource()
+            # 重看走流式视觉调用（stream_vision 恒 True），需同时 patch 流式视觉
             with patch("app.vision.get_vision_client", return_value=vision), \
+                 patch("app.vision._call_vision_model_stream", new=_fake_vision_stream), \
                  patch("app.proxy.get_source_client", return_value=source):
                 import asyncio
                 resp = asyncio.run(handle_chat_completion(request, _RawReq()))
@@ -1223,7 +1225,9 @@ class TestStreamReexamine:
             assert source.calls == 2, "源模型应被调用两次（工具轮被吞后重发）"
             tool_msgs = [m for m in source.bodies[1]["messages"] if m.get("role") == "tool"]
             assert len(tool_msgs) == 1, "第二轮应携带工具结果"
-            assert len(vision.post_calls) == 2, "首次分析 + 重看各 1 次"
+            assert len(vision.post_calls) == 1, "首次分析走非流式（stream_vision_thinking 关）"
+            # 重看的思考链应透传给客户端（stream_vision 恒 True）
+            assert all_text.count("这是分析结果正文") >= 1, "重看思考链应流式透传"
         finally:
             cfg.image.vision_reexamine = old_r
             cfg.image.stream_vision_thinking = old_s
@@ -1405,3 +1409,54 @@ class TestChannelNoteModes:
         assert "grassvision_view_image" not in out2[0]["content"]
         assert "重新发送图片" in out2[0]["content"]
         assert _CHANNEL_NOTE_TEXT != _CHANNEL_NOTE_TEXT_NO_TOOL
+
+
+class TestCrossTurnStreamReexamineThinking:
+    """跨轮次（无当前图片）流式重看：思考链必须透传。"""
+
+    def test_cross_turn_stream_thinking_passthrough(self):
+        from app.proxy import handle_chat_completion
+        from app.config import get_config
+        _clear_image_cache()
+        cfg = get_config()
+        old_r = cfg.image.vision_reexamine
+        old_s = cfg.image.stream_vision_thinking
+        cfg.image.vision_reexamine = True
+        cfg.image.stream_vision_thinking = False  # 首次不流式，仅验证重看思考链
+        try:
+            # 第二轮：历史有图（当前轮无图），流式追问
+            request = ChatCompletionRequest(
+                model="openai-vision",
+                messages=[
+                    ChatMessage(role="user", content=[
+                        {"type": "image_url", "image_url": {"url": TINY_PNG}},
+                        {"type": "text", "text": "看这张图"},
+                    ]),
+                    ChatMessage(role="assistant", content="看到了。"),
+                    ChatMessage(role="user", content="按钮什么颜色?"),
+                ],
+                stream=True,
+            )
+            vision = _FakeVisionClient()
+            source = _ScriptedToolStreamSource()
+            with patch("app.vision.get_vision_client", return_value=vision), \
+                 patch("app.vision._call_vision_model_stream", new=_fake_vision_stream), \
+                 patch("app.proxy.get_source_client", return_value=source):
+                import asyncio
+                resp = asyncio.run(handle_chat_completion(request, _RawReq()))
+
+                async def collect():
+                    chunks = []
+                    async for f in resp.body_iterator:
+                        chunks.append(f)
+                    return chunks
+
+                frames = asyncio.run(collect())
+            all_text = "".join(frames)
+            assert "grassvision_view_image" not in all_text, "工具帧不应泄漏"
+            assert "这是分析结果正文" in all_text, "跨轮重看的思考链应流式透传"
+            assert "最终回答" in all_text
+        finally:
+            cfg.image.vision_reexamine = old_r
+            cfg.image.stream_vision_thinking = old_s
+            _clear_image_cache()
