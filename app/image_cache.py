@@ -48,6 +48,7 @@ class ImageCache:
         self._inflight: dict[str, asyncio.Future] = {}
         self._hits = 0
         self._misses = 0
+        self._vision_calls = 0  # 实际发起视觉模型分析的次数（含失败，不含 waiter）
         self._evictions = 0
         self._expired = 0
         self._calls_saved = 0
@@ -90,6 +91,10 @@ class ImageCache:
             fut = asyncio.get_event_loop().create_future()
             self._inflight[cache_key] = fut
             return (None, "owner")
+
+    def record_vision_call(self) -> None:
+        """记录一次实际视觉模型调用（由 vision 层在真正调用时上报）。"""
+        self._vision_calls += 1
 
     async def set(self, cache_key: str, entry: CacheEntry) -> None:
         if not self.enabled:
@@ -135,6 +140,7 @@ class ImageCache:
             self._inflight.clear()
             self._hits = 0
             self._misses = 0
+            self._vision_calls = 0
             self._evictions = 0
             self._expired = 0
             self._calls_saved = 0
@@ -180,11 +186,15 @@ class ImageCache:
 
     async def stats(self) -> dict:
         async with self._lock:
-            total = self._hits + self._misses
+            # 命中率 = 命中次数 / (命中次数 + 实际视觉调用次数)：
+            # 分母只统计真正发起了视觉模型分析的次数（含失败），
+            # 不含 waiter（等待他人结果）与过期/drop 等"查询级 miss"。
+            denom = self._hits + self._vision_calls
             return {
                 "hits": self._hits,
                 "misses": self._misses,
-                "hit_rate": round(self._hits / total * 100, 1) if total else 0,
+                "vision_calls": self._vision_calls,
+                "hit_rate": round(self._hits / denom * 100, 1) if denom else 0,
                 "size": len(self._store),
                 "max_entries": self.max_entries,
                 "evictions": self._evictions,
@@ -197,12 +207,18 @@ class ImageCache:
     # ── 磁盘快照 ────────────────────────────────────────────────
 
     async def save_snapshot(self) -> None:
-        """把未过期的缓存条目写入磁盘（wall-clock 时间戳）。"""
+        """把未过期的缓存条目与统计计数写入磁盘（wall-clock 时间戳）。"""
         if not self.enabled:
             return
         async with self._lock:
             now = time.monotonic()
-            data = {}
+            data = {
+                "_stats": {
+                    "hits": self._hits,
+                    "vision_calls": self._vision_calls,
+                    "calls_saved": self._calls_saved,
+                },
+            }
             for key, entry in self._store.items():
                 if entry.expires_at > now:
                     data[key] = {
@@ -224,7 +240,7 @@ class ImageCache:
             pass
 
     async def load_snapshot(self) -> None:
-        """启动时从磁盘加载未过期条目（wall 时间转回 monotonic）。"""
+        """启动时从磁盘加载未过期条目与统计计数（wall 时间转回 monotonic）。"""
         if not self.enabled:
             return
         if not SNAPSHOT_PATH.exists():
@@ -237,6 +253,11 @@ class ImageCache:
             return
         now = time.monotonic()
         async with self._lock:
+            stats_raw = data.pop("_stats", None)
+            if isinstance(stats_raw, dict):
+                self._hits = int(stats_raw.get("hits", self._hits))
+                self._vision_calls = int(stats_raw.get("vision_calls", self._vision_calls))
+                self._calls_saved = int(stats_raw.get("calls_saved", self._calls_saved))
             for key, raw in data.items():
                 if not isinstance(raw, dict):
                     continue

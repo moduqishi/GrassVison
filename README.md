@@ -49,6 +49,7 @@
 | 能力 | 说明 |
 |---|---|
 | 🧠 **流式真实思考链** | 视觉推理 + 源模型思考链单流透传，首帧即真实内容 |
+| 🔁 **协议化服务端重看** | `vision_reexamine`：注入 `view_image` 工具，源模型描述不足时自主调用，**服务端用请求内图片重新分析**（无需用户重发、客户端无感知，非流式与流式均支持） |
 | 🎯 **定位-放大-再读** | `grounding_zoom`：坐标框 + 本地裁剪放大二次精读 |
 | 📋 **结构化证据** | `structured_evidence`：摘要/全文/版面/实体 JSON，**不确定项单独标注**防幻觉 |
 | 🔍 **问题感知缓存** | `question_aware_cache`：用户问题直达视觉模型，缓存键随问题变化 |
@@ -122,14 +123,24 @@ http://127.0.0.1:8042/admin
 ```yaml
 models:
   deepseek-v4-flash-vision:
-    vision_provider: minimax        # 主视觉渠道
-    vision_provider_failover: [cpa] # 故障转移
-    grounding_zoom: true            # 定位-放大-再读
-    structured_evidence: true       # 结构化证据
+    vision_provider: minimax          # 主视觉渠道
+    vision_provider_failover: [cpa]   # 故障转移
+    grounding_zoom: true              # 定位-放大-再读
+    structured_evidence: true         # 结构化证据
+    vision_reexamine: true            # 协议化服务端重看（源模型自主再看图）
 image:
-  multi_image_mode: auto            # 对比意图自动联合分析
-  stream_vision_thinking: true      # 流式真实思考链
+  multi_image_mode: auto              # 对比意图自动联合分析
+  stream_vision_thinking: true        # 流式视觉思考（与重看融合，可同时开启）
 ```
+
+> 💡 **融合流式**：`stream_vision_thinking` 与 `vision_reexamine` 可同时开启——客户端会看到
+> "视觉思考① → 源模型思考 →（工具轮被吞，服务端重看）→ 视觉思考② → 源模型最终回答"
+> 的完整思考链，全程单条 SSE 流、无静默、无工具痕迹，最接近原生多模态的按需重看体验。
+>
+> **跨轮次无感重看**：第二轮纯文字追问第一轮图片的细节时，开启 `reuse_historical_cache`
+> + `vision_channel_note` + `vision_reexamine`，源模型会在描述不足时自动调用工具、
+> 服务端用**历史图片**重新分析——实测对像素级细节（按钮颜色、趋势线颜色、警示图标）
+> 3/3 触发并精确作答，全程客户端无感知。
 
 ---
 

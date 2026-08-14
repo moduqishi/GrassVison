@@ -230,12 +230,19 @@
                 </div>
                 <label class="switch"><input type="checkbox" x-model="form.image.vision_stream_prelude"><span class="track"></span></label>
             </div>
-            <div class="switch-row" style="margin-bottom:0">
+            <div class="switch-row">
                 <div>
                     <div class="switch-label">思考链引导</div>
                     <div class="switch-desc">注入系统提示，让源模型在思考链（推理过程）中引用图片分析结果</div>
                 </div>
                 <label class="switch"><input type="checkbox" x-model="form.image.thinking_guidance"><span class="track"></span></label>
+            </div>
+            <div class="switch-row" style="margin-bottom:0">
+                <div>
+                    <div class="switch-label">通道说明（按需重看）</div>
+                    <div class="switch-desc">告诉源模型"收到的是文字分析不是像素"，细节不足时主动引导用户重发图片触发带新意图的重新分析</div>
+                </div>
+                <label class="switch"><input type="checkbox" x-model="form.image.vision_channel_note"><span class="track"></span></label>
             </div>
         </div>
     </div>

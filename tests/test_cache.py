@@ -180,3 +180,42 @@ class TestSnapshotPersistence:
         asyncio.run(cache2.load_snapshot())
         got, status = asyncio.run(cache2.get_or_reserve("key2"))
         assert status == "owner", "已过期的条目不应从快照加载"
+
+
+class TestHitRateDenominator:
+    """命中率 = 命中 / (命中 + 实际视觉调用次数)，不含 waiter/过期。"""
+
+    def test_hit_rate_uses_vision_calls(self):
+        import time
+        from app.image_cache import ImageCache, CacheEntry
+        cache = ImageCache(enabled=True, ttl_seconds=3600, max_entries=10)
+        now = time.monotonic()
+        entry = CacheEntry(result="x", content_hash="h", provider_id="p", model_id="m",
+                           prompt_hash="ph", analysis_mode="independent",
+                           created_at=now, expires_at=now + 100)
+        asyncio.run(cache.set("k", entry))
+        for _ in range(9):
+            _, s = asyncio.run(cache.get_or_reserve("k"))
+            assert s == "cached"
+        cache.record_vision_call()  # 1 次实际视觉调用
+        st = asyncio.run(cache.stats())
+        assert st["vision_calls"] == 1
+        assert st["hit_rate"] == 90.0, f"9 命中 / (9 命中 + 1 调用) = 90%，实际 {st['hit_rate']}"
+
+    def test_stats_persisted_in_snapshot(self, tmp_path, monkeypatch):
+        import time
+        from app.image_cache import ImageCache, CacheEntry
+        monkeypatch.setattr("app.image_cache.SNAPSHOT_PATH", tmp_path / "vc.json")
+        c1 = ImageCache(enabled=True, ttl_seconds=3600, max_entries=10)
+        now = time.monotonic()
+        asyncio.run(c1.set("k", CacheEntry(result="x", content_hash="h", provider_id="p",
+                                           model_id="m", prompt_hash="ph", analysis_mode="independent",
+                                           created_at=now, expires_at=now + 100)))
+        asyncio.run(c1.get_or_reserve("k"))  # hit
+        c1.record_vision_call()
+        asyncio.run(c1.save_snapshot())
+        c2 = ImageCache(enabled=True, ttl_seconds=3600, max_entries=10)
+        asyncio.run(c2.load_snapshot())
+        st = asyncio.run(c2.stats())
+        assert st["hits"] == 1
+        assert st["vision_calls"] == 1

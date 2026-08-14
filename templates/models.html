@@ -184,6 +184,13 @@
                                     </div>
                                     <div class="switch-row" style="margin-top:12px;margin-bottom:0">
                                         <div>
+                                            <div class="switch-label">协议化服务端重看</div>
+                                            <div class="switch-desc">注入 view_image 工具，源模型描述不足时自主调用，GrassVision 服务端用请求内图片重新分析（无需用户重发，客户端无感知）</div>
+                                        </div>
+                                        <label class="switch"><input type="checkbox" x-model="form.vision_reexamine"><span class="track"></span></label>
+                                    </div>
+                                    <div class="switch-row" style="margin-top:12px;margin-bottom:0">
+                                        <div>
                                             <div class="switch-label">结构化证据输出</div>
                                             <div class="switch-desc">视觉模型返回 JSON 证据（摘要/全文/版面/实体/不确定项），格式化后注入，不确定项单独标注防幻觉</div>
                                         </div>
@@ -249,7 +256,7 @@ function modelManager() {
         sourceKeys:{{ source_keys | tojson }}, visionKeys:{{ vision_keys | tojson }}, promptFiles:{{ prompt_files | tojson }},
         sourceModels:{}, visionModels:{}, sourceLoading:false, visionLoading:false,
 
-        form:{model_id:'',name:'',source_provider:'',source_model:'',vision_enabled:false,vision_provider:'',vision_model:'',vision_prompt:'prompts/default.txt',cache_prompt:null,vision_failure_mode:'error',replace_response_model:true,enabled:true,vision_provider_failover:[],grounding_zoom:false,structured_evidence:false},
+        form:{model_id:'',name:'',source_provider:'',source_model:'',vision_enabled:false,vision_provider:'',vision_model:'',vision_prompt:'prompts/default.txt',cache_prompt:null,vision_failure_mode:'error',replace_response_model:true,enabled:true,vision_provider_failover:[],grounding_zoom:false,structured_evidence:false,vision_reexamine:false},
 
         get sourceModelCount(){
             const arr=this.sourceModels[this.form.source_provider];
@@ -263,7 +270,7 @@ function modelManager() {
         async init(){ const d=await api('GET','/api/admin/models'); this.models=d.models||{}; },
         openCreate(){
             this.editing=false;
-            this.form={model_id:'',name:'',source_provider:'',source_model:'',vision_enabled:false,vision_provider:'',vision_model:'',vision_prompt:'prompts/default.txt',cache_prompt:null,vision_failure_mode:'error',replace_response_model:true,enabled:true,vision_provider_failover:[],grounding_zoom:false,structured_evidence:false};
+            this.form={model_id:'',name:'',source_provider:'',source_model:'',vision_enabled:false,vision_provider:'',vision_model:'',vision_prompt:'prompts/default.txt',cache_prompt:null,vision_failure_mode:'error',replace_response_model:true,enabled:true,vision_provider_failover:[],grounding_zoom:false,structured_evidence:false,vision_reexamine:false};
             this.showModal=true;
             this.$nextTick(()=>{ if(this.$refs.firstInput) this.$refs.firstInput.focus(); });
         },

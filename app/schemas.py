@@ -47,6 +47,9 @@ class EnhancedModelConfig(BaseModel):
     vision_provider_failover: list[str] = Field(default_factory=list)
     # 定位-放大-再读：用户问题针对具体 UI 元素时，先定位坐标框，再裁剪放大做二次精读
     grounding_zoom: bool = False
+    # 协议化服务端重看：注入 grassvision_view_image 工具，源模型描述不足时自主调用，
+    # GrassVision 在服务端用请求内缓存的图片字节重新分析（无需用户重发），客户端无感知
+    vision_reexamine: bool = False
     # 结构化证据输出：视觉模型返回 JSON 证据（摘要/全文/版面/实体/不确定项），
     # 解析校验后格式化为易引用文本注入（不确定项单独标注）
     structured_evidence: bool = False
@@ -92,6 +95,9 @@ class ImageConfig(BaseModel):
     stream_vision_thinking: bool = False  # 流式透传视觉模型的思考/分析过程，再无缝衔接源模型
     # 流式视觉阶段是否推送"正在处理图片"预提示：默认关闭，追求真实思考链（首帧即视觉模型真实输出）
     vision_stream_prelude: bool = False
+    # 通道说明注入：告诉源模型"收到的是文字分析不是像素"，细节不足时主动引导用户重发图片
+    # 从而触发带新意图的重新分析（模拟原生多模态的按需重看，参考 agent-vision-toolkit）
+    vision_channel_note: bool = False
     # 问题感知缓存：开启后把用户问题格式化进视觉 prompt，缓存键随问题变化，
     # 同一图片不同问题分别分析（针对性更强、缓存命中率下降）
     question_aware_cache: bool = False

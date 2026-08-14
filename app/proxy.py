@@ -24,7 +24,391 @@ from app.image_utils import (
 from app.providers import get_source_client
 from app.schemas import ChatCompletionRequest, EnhancedModelConfig
 from app.stats import get_stats
-from app.vision import resolve_image_descriptions, _merge_and_number_descriptions, _build_injection_text
+from app.vision import resolve_image_descriptions, _merge_and_number_descriptions, _build_injection_text, reexamine_image
+
+# 协议化服务端重看：注入给源模型的工具定义。模型描述不足时自主调用，
+# GrassVision 在服务端执行（用请求内图片字节 + 新意图重新分析），客户端无感知。
+_VIEW_IMAGE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "grassvision_view_image",
+        "description": (
+            "重新分析图片获取准确信息。图片包括：用户当前上传的图片，以及对话历史中用户发送过的图片。"
+            "当已有图片分析（<grassvision_image_context>）中缺少回答用户问题所需的细节"
+            "（颜色、坐标、小字、图标、布局、表格内容等）时，必须调用本工具重新查看图片，"
+            "不要猜测或假设分析已完整。返回针对你问题的最新分析结果。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "question": {"type": "string", "description": "你想针对图片问的具体问题或需要查看的细节"},
+                "region": {"type": "string", "description": "可选，0-1000 归一化区域 x1,y1,x2,y2（逗号分隔），只查看该区域"},
+            },
+            "required": ["question"],
+        },
+    },
+}
+
+# 服务端重看最大轮数（一次请求内模型最多自主重看几次）
+MAX_REEXAMINE_ROUNDS = 3
+
+
+def _inject_view_image_tool(body: dict) -> dict:
+    """把 grassvision_view_image 工具注入请求（客户端未传 tools 时新建列表）。"""
+    tools = list(body.get("tools") or [])
+    for t in tools:
+        if isinstance(t, dict) and t.get("type") == "function" \
+                and t.get("function", {}).get("name") == "grassvision_view_image":
+            return body
+    tools.append(_VIEW_IMAGE_TOOL)
+    return {**body, "tools": tools}
+
+
+def _strip_view_image_tool(body: dict) -> dict:
+    """移除注入的 view_image 工具（客户端原有工具保留）；没有剩余工具时去掉 tools 键。"""
+    tools = [
+        t for t in (body.get("tools") or [])
+        if not (isinstance(t, dict) and t.get("function", {}).get("name") == "grassvision_view_image")
+    ]
+    if not tools:
+        return {k: v for k, v in body.items() if k != "tools"}
+    return {**body, "tools": tools}
+
+
+def _collect_tool_calls(tool_deltas: list[dict]) -> list[dict]:
+    """把流式 tool_calls 增量（按 index 累计）组装成完整 tool_call 列表。"""
+    acc: dict[int, dict] = {}
+    for tc in tool_deltas:
+        if not isinstance(tc, dict):
+            continue
+        idx = tc.get("index", 0)
+        entry = acc.setdefault(idx, {"id": None, "name": None, "args": ""})
+        if tc.get("id"):
+            entry["id"] = tc["id"]
+        fn = tc.get("function") or {}
+        if fn.get("name"):
+            entry["name"] = fn["name"]
+        if fn.get("arguments"):
+            entry["args"] += fn["arguments"]
+    out = []
+    for idx in sorted(acc):
+        e = acc[idx]
+        out.append({
+            "id": e["id"] or f"call_{idx}",
+            "type": "function",
+            "function": {"name": e["name"] or "", "arguments": e["args"]},
+        })
+    return out
+
+
+def _assistant_msg_with_tool_calls(tool_calls: list[dict]) -> dict:
+    return {"role": "assistant", "content": None, "tool_calls": tool_calls}
+
+
+def _accum_usage(target: dict, usage: dict | None) -> None:
+    """把一次调用的 usage（prompt/completion/total 等）累加到 target。"""
+    for k, v in (usage or {}).items():
+        if isinstance(v, (int, float)):
+            target[k] = target.get(k, 0) + v
+
+
+async def _forward_with_reexamine(
+    body: dict,
+    provider_key: str,
+    public_model_id: str,
+    model: EnhancedModelConfig,
+    images: list,
+    raw_request: Request,
+) -> tuple[JSONResponse, dict | None, dict]:
+    """非流式转发 + 服务端工具重看 loop。
+
+    拦截源模型的 grassvision_view_image 调用 → 服务端执行重看（重新调视觉模型）
+    → 把 tool result 喂回源模型再转发 → 直到源模型给出最终回答（或达到轮数上限）。
+    客户端只看到最终回答，中间的"自主多次看图"完全在服务端完成。
+
+    返回 (resp, agg_source_usage, agg_vision_usage)：用量为多轮重看的聚合值，
+    供上层一次性记录，避免重复计数或丢失。
+    """
+    agg_source: dict = {}
+    agg_vision: dict = {}
+    body_plain: dict | None = None
+    for _round in range(MAX_REEXAMINE_ROUNDS + 1):
+        resp, usage = await _forward_to_source(
+            body, provider_key, public_model_id, stream=False,
+        )
+        _accum_usage(agg_source, usage)
+        # 上游可能不支持 tools 字段（400/422）→ 自动回退为无工具请求重试一次
+        if resp.status_code in (400, 422) and body_plain is None and body.get("tools"):
+            body_plain = _strip_view_image_tool(body)
+            body = body_plain
+            resp, usage = await _forward_to_source(
+                body, provider_key, public_model_id, stream=False,
+            )
+            _accum_usage(agg_source, usage)
+        try:
+            data = json.loads(resp.body)
+        except (json.JSONDecodeError, TypeError, AttributeError):
+            return resp, agg_source, agg_vision
+        msg = (data.get("choices") or [{}])[0].get("message") or {}
+        tool_calls = msg.get("tool_calls") or []
+        view_calls = [
+            tc for tc in tool_calls
+            if isinstance(tc, dict) and tc.get("function", {}).get("name") == "grassvision_view_image"
+        ]
+        if not view_calls:
+            return resp, agg_source, agg_vision
+
+        if _round >= MAX_REEXAMINE_ROUNDS:
+            # 达到重看上限：把 assistant 消息与工具说明追加进对话，
+            # 移除工具定义，强制源模型基于已有图片信息直接回答（不泄漏 tool_calls）
+            body["messages"] = list(body.get("messages") or []) + [msg]
+            body["messages"].append({
+                "role": "tool",
+                "tool_call_id": (view_calls[0].get("id") if view_calls else "call_none"),
+                "content": "[已达到重看次数上限，无法继续查看图片；请基于已有的图片分析信息直接回答用户。]",
+            })
+            body["tools"] = [
+                t for t in (body.get("tools") or [])
+                if not (isinstance(t, dict) and t.get("function", {}).get("name") == "grassvision_view_image")
+            ]
+            resp, usage = await _forward_to_source(
+                body, provider_key, public_model_id, stream=False,
+            )
+            _accum_usage(agg_source, usage)
+            return resp, agg_source, agg_vision
+
+        # 服务端执行重看：把 assistant 消息（含 tool_calls）与 tool 结果追加进对话再转发
+        body["messages"] = list(body.get("messages") or []) + [msg]
+        for tc in view_calls:
+            try:
+                args = json.loads(tc.get("function", {}).get("arguments") or "{}")
+            except json.JSONDecodeError:
+                args = {}
+            question = str(args.get("question", "") or "")
+            region = args.get("region")
+            tool_call_id = tc.get("id")
+            if not images:
+                body["messages"].append({
+                    "role": "tool", "tool_call_id": tool_call_id,
+                    "content": "[当前没有可重看的图片]",
+                })
+                continue
+            try:
+                result_text = await reexamine_image(
+                    images[0].url, question, region, model,
+                    getattr(raw_request, "_httpx_client", None),
+                    usage_accumulator=agg_vision,
+                )
+            except Exception as e:
+                result_text = f"[重看失败: {e}]"
+            body["messages"].append({
+                "role": "tool", "tool_call_id": tool_call_id, "content": result_text,
+            })
+    return resp, agg_source, agg_vision
+
+
+async def _stream_with_reexamine(
+    body: dict,
+    provider_key: str,
+    public_model_id: str,
+    model: EnhancedModelConfig,
+    images: list,
+    raw_request: Request,
+    on_usage: callable | None = None,
+    extra_usage: dict | None = None,
+    stream_vision: bool = False,
+    stream_id: str = "",
+    is_first: dict | None = None,
+):
+    """流式转发 + 服务端重看（单条 SSE 流，客户端无感知）。
+
+    逐帧转发源模型流；首次检测到 tool_calls 增量时按工具名分流：
+      - grassvision_view_image → 该轮流整体吞掉（客户端看不到），流结束后
+        服务端执行重看并发起下一轮流；
+      - 客户端自己的其他工具 → 原样转发（不影响 harness 自带工具）。
+    达到重看上限时移除工具并强制源模型直接回答。
+    stream_vision=True 时，重看的视觉增量以 reasoning_content 帧实时推给客户端
+    （融合版：视觉思考① → 源模型思考 → 视觉思考② → 源模型回答）。
+
+    用量统计：多轮重看的源模型/视觉 token 聚合后统一上报一次（on_usage），
+    避免重复计数或丢失。
+    """
+    cfg = get_config()
+    if is_first is None:
+        is_first = {"value": True}
+    if not stream_id:
+        stream_id = f"chatcmpl-{uuid.uuid4().hex}"
+    agg_source: dict = {}
+    agg_vision: dict = {}
+
+    async def _inner():
+        nonlocal body
+        plain_retried = False
+        for _round in range(MAX_REEXAMINE_ROUNDS + 2):
+            provider = cfg.source_providers.get(provider_key)
+            if not provider or not provider.enabled:
+                yield f"data: {json.dumps({'error': {'message': 'Source provider unavailable'}})}" + "\n\n"
+                yield "data: [DONE]\n\n"
+                return
+            client = get_source_client(provider)
+            mode = "forward"      # forward=转发给客户端 | swallow=吞掉工具轮
+            tool_deltas: list[dict] = []
+            finished = False
+            try:
+                async with client.stream("POST", "/chat/completions", json=body) as resp:
+                    if resp.status_code != 200:
+                        error_body = (await resp.aread()).decode(errors="replace")[:500]
+                        # 上游不支持 tools → 回退无工具重试一次
+                        if not plain_retried and body.get("tools"):
+                            plain_retried = True
+                            body = _strip_view_image_tool(body)
+                            continue
+                        err_frame = json.dumps({'error': {'message': error_body, 'type': 'upstream_error', 'code': resp.status_code}})
+                        yield f"data: {err_frame}" + "\n\n"
+                        yield "data: [DONE]\n\n"
+                        return
+                    async for line in resp.aiter_lines():
+                        if not line:
+                            if mode == "forward":
+                                yield "\n"
+                            continue
+                        if line.startswith("data: "):
+                            data_str = line[6:].strip()
+                            if data_str == "[DONE]":
+                                if mode == "forward":
+                                    yield "data: [DONE]\n\n"
+                                finished = True
+                                break
+                            u = _extract_usage_from_chunk(data_str)
+                            try:
+                                data = json.loads(data_str)
+                            except json.JSONDecodeError:
+                                continue
+                            delta = ((data.get("choices") or [{}])[0].get("delta")) or {}
+                            tcs = delta.get("tool_calls")
+                            if tcs:
+                                if mode == "forward":
+                                    # 首帧工具调用：按工具名分流
+                                    names = [
+                                        (tc.get("function") or {}).get("name") or ""
+                                        for tc in tcs if isinstance(tc, dict)
+                                    ]
+                                    if any(n == "grassvision_view_image" for n in names):
+                                        mode = "swallow"
+                                    # 客户端自己的工具：保持 forward 正常转发
+                                if mode == "swallow":
+                                    tool_deltas.extend(tcs)
+                                    continue
+                            if mode == "forward":
+                                # 聚合用量（不逐帧 record，generator 结束时统一上报一次）
+                                _accum_usage(agg_source, u)
+                                if u and extra_usage:
+                                    try:
+                                        data["usage"] = {**u, **extra_usage}
+                                        line = f"data: {json.dumps(data, ensure_ascii=False)}"
+                                    except json.JSONDecodeError:
+                                        pass
+                                if is_first["value"]:
+                                    line = _sanitize_stream_chunk(line, public_model_id, True)
+                                    is_first["value"] = False
+                                else:
+                                    line = _sanitize_stream_chunk(line, public_model_id, False)
+                                yield line + "\n"
+                        elif mode == "forward" and line.strip():
+                            yield line + "\n"
+            finally:
+                pass  # 连接池化，不在调用点关闭
+
+            if not finished and mode == "forward":
+                # 流异常中断但已转发——结束
+                return
+
+            if mode == "forward":
+                return  # 正常转发完成（含客户端自己的工具透传）
+
+            # ── 吞掉了 view_image 工具轮：执行服务端重看 ──
+            tool_calls = _collect_tool_calls(tool_deltas)
+            view_calls = [
+                tc for tc in tool_calls
+                if tc.get("function", {}).get("name") == "grassvision_view_image"
+            ]
+            if not view_calls:
+                return
+            assistant_msg = _assistant_msg_with_tool_calls(tool_calls)
+            body["messages"] = list(body.get("messages") or []) + [assistant_msg]
+
+            if _round >= MAX_REEXAMINE_ROUNDS:
+                # 达到上限：移除工具 + 说明，强制下一轮直接回答
+                body = _strip_view_image_tool(body)
+                body["messages"].append({
+                    "role": "tool",
+                    "tool_call_id": view_calls[0].get("id", "call_none"),
+                    "content": "[已达到重看次数上限，无法继续查看图片；请基于已有的图片分析信息直接回答用户。]",
+                })
+                continue
+
+            for tc in view_calls:
+                try:
+                    args = json.loads(tc.get("function", {}).get("arguments") or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                question = str(args.get("question", "") or "")
+                region = args.get("region")
+                if not images:
+                    body["messages"].append({
+                        "role": "tool", "tool_call_id": tc.get("id"),
+                        "content": "[当前没有可重看的图片]",
+                    })
+                    continue
+                try:
+                    if stream_vision:
+                        # 融合版：重看的视觉增量实时推给客户端（reasoning_content 帧）
+                        vq: asyncio.Queue = asyncio.Queue()
+
+                        async def _vemit(kind: str, text: str) -> None:
+                            await vq.put(("token", kind, text))
+
+                        async def _vrun() -> str:
+                            try:
+                                return await reexamine_image(
+                                    images[0].url, question, region, model,
+                                    getattr(raw_request, "_httpx_client", None),
+                                    emit=_vemit,
+                                    usage_accumulator=agg_vision,
+                                )
+                            finally:
+                                await vq.put(None)
+
+                        vtask = asyncio.create_task(_vrun())
+                        while True:
+                            vitem = await vq.get()
+                            if vitem is None:
+                                break
+                            vframe, is_first["value"] = _build_vision_frame(
+                                vitem[2], public_model_id, stream_id, is_first["value"]
+                            )
+                            yield vframe
+                        result_text = await vtask
+                    else:
+                        result_text = await reexamine_image(
+                            images[0].url, question, region, model,
+                            getattr(raw_request, "_httpx_client", None),
+                            usage_accumulator=agg_vision,
+                        )
+                except Exception as e:
+                    result_text = f"[重看失败: {e}]"
+                body["messages"].append({
+                    "role": "tool", "tool_call_id": tc.get("id"), "content": result_text,
+                })
+
+    try:
+        async for frame in _inner():
+            yield frame
+    finally:
+        # 用量聚合：一次请求（含多轮重看）只上报一次
+        if on_usage and agg_source:
+            on_usage(agg_source)
+
 
 
 def _find_model(model_id: str) -> EnhancedModelConfig:
@@ -43,6 +427,17 @@ _THINKING_GUIDANCE_TEXT = (
     "结合图片内容完成推理后，再回答用户的问题。"
 )
 
+# 通道说明：image.vision_channel_note 开启时注入。告诉源模型"收到的是文字分析不是像素"，
+# 细节不足时主动引导用户重发图片（重发会触发带新意图的重新分析），
+# 模拟原生多模态"按需重看"（参考 agent-vision-toolkit 的通道说明设计）。
+_CHANNEL_NOTE_TEXT = (
+    "重要说明：<grassvision_image_context> 中的图片信息是视觉模型对用户图片的"
+    "文字分析，不是图片本身——你看不到像素，而且分析**可能不完整或有遗漏**。\n"
+    "如果回答用户问题需要分析中没有的细节（颜色、坐标、小字、图标、表格内容等），"
+    "**不要猜测、不要假设分析已覆盖全部内容**；请调用 grassvision_view_image 工具"
+    "重新分析图片获取准确信息。仅在无法重新分析时，再请用户重新发送图片。"
+)
+
 
 def _inject_thinking_guidance(messages: list[dict]) -> list[dict]:
     """把思考链引导追加到已有的 system 消息；没有 system 消息则在最前面插入一条。"""
@@ -56,6 +451,19 @@ def _inject_thinking_guidance(messages: list[dict]) -> list[dict]:
                 messages[i] = {"role": "system", "content": guidance}
             return messages
     return [{"role": "system", "content": guidance}, *messages]
+
+
+def _inject_channel_note(messages: list[dict]) -> list[dict]:
+    """把通道说明追加到已有 system 消息；没有则插入一条（与思考链引导同理）。"""
+    for i, msg in enumerate(messages):
+        if msg.get("role") == "system":
+            content = msg.get("content")
+            if isinstance(content, str):
+                messages[i] = {**msg, "content": f"{content}\n\n{_CHANNEL_NOTE_TEXT}"}
+            else:
+                messages[i] = {"role": "system", "content": _CHANNEL_NOTE_TEXT}
+            return messages
+    return [{"role": "system", "content": _CHANNEL_NOTE_TEXT}, *messages]
 
 
 def _build_source_body(request: ChatCompletionRequest, model: EnhancedModelConfig, messages: list[dict]) -> dict:
@@ -175,6 +583,9 @@ async def handle_chat_completion(
                     stripped = inject_image_descriptions(messages_raw, {})
             else:
                 stripped = inject_image_descriptions(messages_raw, {})
+        # 无当前图片但开启重看：注入通道说明（引导模型怀疑描述、主动重看历史图）
+        if model.vision_enabled and model.vision_reexamine and cfg.image.vision_channel_note:
+            stripped = _inject_channel_note(stripped)
         body = _build_source_body(request, model, stripped)
         if request.stream:
             def _on_noimg_usage(usage):
@@ -184,6 +595,22 @@ async def handle_chat_completion(
                     vision_used=False, vision_success=False,
                     source_tokens=usage,
                 )
+            if model.vision_enabled and model.vision_reexamine:
+                # 无图流式：注入工具，允许源模型重看历史图片（跨轮次无感重看）
+                body = _inject_view_image_tool(body)
+                return StreamingResponse(
+                    _stream_with_reexamine(
+                        body=body,
+                        provider_key=model.source_provider,
+                        public_model_id=request.model if model.replace_response_model else model.source_model,
+                        model=model,
+                        images=all_images,
+                        raw_request=raw_request,
+                        on_usage=_on_noimg_usage,
+                    ),
+                    media_type="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+                )
             resp, _ = await _forward_to_source(
                 body=body,
                 provider_key=model.source_provider,
@@ -192,16 +619,32 @@ async def handle_chat_completion(
                 on_usage=_on_noimg_usage,
             )
         else:
-            resp, source_usage = await _forward_to_source(
-                body=body,
-                provider_key=model.source_provider,
-                public_model_id=request.model if model.replace_response_model else model.source_model,
-                stream=False,
-            )
+            noimg_vision_usage: dict | None = None
+            if model.vision_enabled and model.vision_reexamine:
+                # 无图非流式：注入工具，源模型可重看历史图片（跨轮次无感重看）
+                body = _inject_view_image_tool(body)
+                resp, source_usage, reexam_vision = await _forward_with_reexamine(
+                    body=body,
+                    provider_key=model.source_provider,
+                    public_model_id=request.model if model.replace_response_model else model.source_model,
+                    model=model,
+                    images=all_images,
+                    raw_request=raw_request,
+                )
+                if reexam_vision:
+                    noimg_vision_usage = reexam_vision
+            else:
+                resp, source_usage = await _forward_to_source(
+                    body=body,
+                    provider_key=model.source_provider,
+                    public_model_id=request.model if model.replace_response_model else model.source_model,
+                    stream=False,
+                )
             stats_tracker.record_call(
                 model=request.model, images=len(all_images),
                 stream=request.stream, elapsed=0,
-                vision_used=False, vision_success=False,
+                vision_used=bool(noimg_vision_usage), vision_success=bool(noimg_vision_usage),
+                vision_tokens=noimg_vision_usage,
                 source_tokens=source_usage,
             )
         return resp
@@ -210,9 +653,10 @@ async def handle_chat_completion(
     if len(current_images) > cfg.image.max_images:
         return _openai_error_response(400, f"Too many images: {len(current_images)} > {cfg.image.max_images}")
 
-    # ── 2.5 流式透传视觉思考：不阻塞等待分析，先流式显示视觉模型的
-    #     思考/分析过程，再无缝衔接源模型（系统设置 image.stream_vision_thinking）─
-    if request.stream and cfg.image.stream_vision_thinking:
+    # ── 2.5 融合流式：视觉思考（可选）+ 源模型流（含服务端重看）──
+    # 统一入口：stream_vision_thinking 或 vision_reexamine 任一开启即走融合流，
+    # 二者可自由组合（不再二选一）。
+    if request.stream and (cfg.image.stream_vision_thinking or model.vision_reexamine):
         return StreamingResponse(
             _combined_stream(
                 request=request,
@@ -307,6 +751,8 @@ async def handle_chat_completion(
     # ── 6. 思考链引导：让源模型在推理时引用图片分析 ──────────
     if cfg.image.thinking_guidance:
         enhanced_messages = _inject_thinking_guidance(enhanced_messages)
+    if cfg.image.vision_channel_note:
+        enhanced_messages = _inject_channel_note(enhanced_messages)
 
     # ── 7. Assert no image_url blocks remain ────────────────────
     assert_no_image_url_blocks(enhanced_messages)
@@ -334,13 +780,30 @@ async def handle_chat_completion(
             extra_usage=_vision_usage_extra(vision_usage),
         )
     else:
-        resp, source_usage = await _forward_to_source(
-            body=body,
-            provider_key=model.source_provider,
-            public_model_id=request.model if model.replace_response_model else model.source_model,
-            stream=False,
-            extra_usage=_vision_usage_extra(vision_usage),
-        )
+        if model.vision_reexamine:
+            # 协议化服务端重看：注入工具 + 拦截 tool_call 在服务端执行（客户端无感知）
+            body = _inject_view_image_tool(body)
+            resp, source_usage, reexam_vision = await _forward_with_reexamine(
+                body=body,
+                provider_key=model.source_provider,
+                public_model_id=request.model if model.replace_response_model else model.source_model,
+                model=model,
+                images=current_images or all_images,
+                raw_request=raw_request,
+            )
+            # 用量聚合：首次视觉分析 + 各轮重看的视觉 token
+            if reexam_vision:
+                vision_usage = dict(vision_usage or {})
+                for k, v in reexam_vision.items():
+                    vision_usage[k] = vision_usage.get(k, 0) + v
+        else:
+            resp, source_usage = await _forward_to_source(
+                body=body,
+                provider_key=model.source_provider,
+                public_model_id=request.model if model.replace_response_model else model.source_model,
+                stream=False,
+                extra_usage=_vision_usage_extra(vision_usage),
+            )
         stats_tracker.record_call(
             model=request.model, images=len(all_images),
             stream=request.stream, elapsed=0,
@@ -439,19 +902,23 @@ async def _combined_stream(
     stream_id = f"chatcmpl-{uuid.uuid4().hex}"
     queue: asyncio.Queue = asyncio.Queue()
     is_first = {"value": True}
+    # 融合版：视觉思考流是否开启（stream_vision_thinking 控制阶段 1 的可视化；
+    # 即使关闭，阶段 2 的重看仍可用——重看增量同样可流式推送）
+    vision_stream_on = bool(cfg.image.stream_vision_thinking)
+    stream_queue = queue if vision_stream_on else None
 
     # 历史缓存复用需要全部图片位置（含历史轮次）
     all_images = extract_all_images_with_positions(messages_raw)
 
     # 预提示（可选）：默认关闭——首帧即视觉模型真实输出，思考链完全真实；
     # 开启则先推一条"正在处理"占位，消除下载/排队期的静默等待。
-    if cfg.image.vision_stream_prelude:
+    if vision_stream_on and cfg.image.vision_stream_prelude:
         prelude, is_first["value"] = _build_vision_frame(
             "【正在处理用户发送的图片…】", public_model_id, stream_id, True
         )
         yield prelude
 
-    # ── 阶段 1：流式视觉分析 ───────────────────────────────────
+    # ── 阶段 1：视觉分析（可选流式透传思考）────────────────────
     resolve_images = all_images if cfg.image.reuse_historical_cache else current_images
 
     async def _resolve():
@@ -463,25 +930,27 @@ async def _combined_stream(
                 historical_cache_miss=cfg.image.historical_cache_miss,
                 request_client=getattr(raw_request, "_httpx_client", None),
                 user_question=extract_user_question(messages_raw),
-                stream_queue=queue,
+                stream_queue=stream_queue,
                 failure_mode=model.vision_failure_mode,
             )
         finally:
             # 保证消费端一定能等到结束标记（即使内部抛异常也不会挂起）
-            await queue.put(("done", "", ""))
+            if stream_queue is not None:
+                await queue.put(("done", "", ""))
 
     try:
         task = asyncio.create_task(_resolve())
-        while True:
-            item = await queue.get()
-            if item[0] == "done":
-                break
-            # item = ("token", kind, text)：kind ∈ {"reasoning", "content"}
-            # 统一进 reasoning_content（视觉阶段的分析即思考链），kind 保留供诊断
-            frame, is_first["value"] = _build_vision_frame(
-                item[2], public_model_id, stream_id, is_first["value"]
-            )
-            yield frame
+        if stream_queue is not None:
+            while True:
+                item = await queue.get()
+                if item[0] == "done":
+                    break
+                # item = ("token", kind, text)：kind ∈ {"reasoning", "content"}
+                # 统一进 reasoning_content（视觉阶段的分析即思考链），kind 保留供诊断
+                frame, is_first["value"] = _build_vision_frame(
+                    item[2], public_model_id, stream_id, is_first["value"]
+                )
+                yield frame
         descriptions, vision_usage = await task
     except VisionAnalysisError as e:
         if model.vision_failure_mode != "skip":
@@ -528,6 +997,8 @@ async def _combined_stream(
 
     if cfg.image.thinking_guidance:
         enhanced_messages = _inject_thinking_guidance(enhanced_messages)
+    if cfg.image.vision_channel_note:
+        enhanced_messages = _inject_channel_note(enhanced_messages)
     assert_no_image_url_blocks(enhanced_messages)
 
     body = _build_source_body(request, model, enhanced_messages)
@@ -541,11 +1012,29 @@ async def _combined_stream(
             source_tokens=usage,
         )
 
-    async for line in _iter_source_stream(
-        body, model.source_provider, public_model_id,
-        on_usage=_on_source_usage, extra_usage=_vision_usage_extra(vision_usage),
-    ):
-        yield line
+    if model.vision_reexamine:
+        # 融合版阶段 2：源模型流 + 服务端重看（工具轮吞掉、重看增量流式推送）
+        body = _inject_view_image_tool(body)
+        async for line in _stream_with_reexamine(
+            body=body,
+            provider_key=model.source_provider,
+            public_model_id=public_model_id,
+            model=model,
+            images=current_images or all_images,
+            raw_request=raw_request,
+            on_usage=_on_source_usage,
+            extra_usage=_vision_usage_extra(vision_usage),
+            stream_vision=vision_stream_on,
+            stream_id=stream_id,
+            is_first=is_first,
+        ):
+            yield line
+    else:
+        async for line in _iter_source_stream(
+            body, model.source_provider, public_model_id,
+            on_usage=_on_source_usage, extra_usage=_vision_usage_extra(vision_usage),
+        ):
+            yield line
 
 
 async def _forward_to_source(

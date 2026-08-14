@@ -343,6 +343,95 @@ async def _resolve_grounding_zoom(
     )
 
 
+def _parse_region(region: str) -> tuple[int, int, int, int] | None:
+    """解析工具参数 region "x1,y1,x2,y2"（0-1000 归一化）。"""
+    try:
+        parts = [int(p.strip()) for p in region.split(",")]
+        if len(parts) != 4:
+            return None
+        x1, y1, x2, y2 = parts
+        if x1 < 0 or y1 < 0 or x2 <= x1 or y2 <= y1 or x2 > 1000 or y2 > 1000:
+            return None
+        return (x1, y1, x2, y2)
+    except (ValueError, AttributeError):
+        return None
+
+
+async def reexamine_image(
+    url: str,
+    question: str,
+    region: str | None,
+    model_config,
+    request_client: httpx.AsyncClient | None = None,
+    emit: callable | None = None,
+    usage_accumulator: dict | None = None,
+) -> str:
+    """协议化服务端重看（grassvision_view_image 工具执行体）。
+
+    用请求内的图片（data URL 直接解码 / HTTP URL 重新下载）+ 新意图重新分析；
+    region 提供 0-1000 归一化区域时，先本地裁剪放大再精读（工具化 grounding）。
+    emit 提供时改为流式视觉调用（增量经 emit(kind, text) 回调，供流式融合版推送思考链）。
+    usage_accumulator 提供时累计本次重看的视觉 token 用量（供用量统计）。
+    """
+    if not (question or "").strip():
+        raise VisionAnalysisError("grassvision_view_image 缺少 question 参数")
+    cfg = get_config()
+    data_url = await resolve_image_to_base64(url, request_client)
+
+    provider_ids = [model_config.vision_provider]
+    provider_ids += [p for p in (getattr(model_config, "vision_provider_failover", None) or []) if p]
+    provider_ids = list(dict.fromkeys(provider_ids))
+    explicit_model = model_config.vision_model or ""
+    system_prompt = _load_prompt_content(model_config.vision_prompt, question)
+
+    target = data_url
+    box = _parse_region(region) if region else None
+    if box is not None:
+        import base64 as _b64
+        m = DATA_URL_RE.match(data_url)
+        if m:
+            raw = _b64.b64decode(m.group(2))
+            zoom = _crop_zoom_data_url(raw, box)
+            if zoom:
+                target = zoom
+                x1, y1, x2, y2 = box
+                system_prompt += (
+                    f"\n（已按请求裁剪放大 0-1000 区域 x1={x1},y1={y1},x2={x2},y2={y2}，"
+                    f"只分析该区域）"
+                )
+
+    if emit is not None:
+        result = await _call_vision_model_stream(
+            provider_id=provider_ids[0],
+            model_id=explicit_model,
+            system_prompt=system_prompt,
+            user_question=question,
+            image_urls=[target],
+            request_client=request_client,
+            emit=emit,
+        )
+    else:
+        result = await _call_vision_chain(
+            provider_ids=provider_ids,
+            explicit_model=explicit_model,
+            system_prompt=system_prompt,
+            user_question=question,
+            image_urls=[target],
+            request_client=request_client,
+        )
+    # 重看也是一次实际视觉调用（计入缓存统计的 vision_calls）
+    try:
+        get_image_cache().record_vision_call()
+    except Exception:
+        pass
+    # 累计重看的视觉 token 用量（供用量统计）
+    if usage_accumulator is not None and result.get("token_usage"):
+        for k, v in result["token_usage"].items():
+            if isinstance(v, (int, float)):
+                usage_accumulator[k] = usage_accumulator.get(k, 0) + v
+    return result["result"]
+
+
 def build_cache_key(
     content_hash: str,
     provider_id: str,
@@ -730,6 +819,7 @@ async def resolve_image_descriptions(
                     if user_question
                     else f"请同时分析这 {n} 张图片，说明每张的内容以及它们之间的异同与关系。"
                 )
+                cache.record_vision_call()  # 联合分析：一次实际视觉调用
                 result = await _call_vision_chain(
                     provider_ids=provider_chain,
                     explicit_model=explicit_model,
@@ -855,7 +945,8 @@ async def resolve_image_descriptions(
             elif status_str == "owner":
                 # We need to call vision model — but only if allowed
                 if can_analyze or (is_historical and historical_cache_miss == "analyze"):
-                    # 视觉调用（主渠道 + 故障转移链）
+                    # 视觉调用（主渠道 + 故障转移链）——上报实际视觉调用次数
+                    cache.record_vision_call()
                     try:
                         result = await _call_vision_chain(
                             provider_ids=provider_chain,

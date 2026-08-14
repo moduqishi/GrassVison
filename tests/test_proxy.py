@@ -942,7 +942,9 @@ class TestStreamVisionThinking:
         cur = extract_current_turn_positions(raw)
         source = _FakeStreamingSource()
         old = cfg.image.vision_stream_prelude
+        old_stream = cfg.image.stream_vision_thinking
         cfg.image.vision_stream_prelude = prelude
+        cfg.image.stream_vision_thinking = True
         try:
             import asyncio
 
@@ -960,6 +962,7 @@ class TestStreamVisionThinking:
                 return asyncio.run(collect())
         finally:
             cfg.image.vision_stream_prelude = old
+            cfg.image.stream_vision_thinking = old_stream
 
     def test_first_frame_is_real_reasoning(self):
         from app.config import get_config
@@ -990,4 +993,402 @@ class TestStreamVisionThinking:
             first_data = json.loads(frames[0][6:].strip())
             assert "正在处理" in first_data["choices"][0]["delta"].get("reasoning_content", "")
         finally:
+            _clear_image_cache()
+
+
+class TestChannelNote:
+    """vision_channel_note：注入通道说明，引导源模型按需重看图片。"""
+
+    def test_channel_note_injected_when_enabled(self):
+        from app.proxy import handle_chat_completion
+        from app.config import get_config
+        _clear_image_cache()
+        cfg = get_config()
+        old = cfg.image.vision_channel_note
+        cfg.image.vision_channel_note = True
+        try:
+            request = ChatCompletionRequest(
+                model="openai-vision",
+                messages=[ChatMessage(role="user", content=[
+                    {"type": "image_url", "image_url": {"url": TINY_PNG}},
+                    {"type": "text", "text": "这张图是什么?"},
+                ])],
+                stream=False,
+            )
+            vision = _FakeVisionClient()
+            source = _FakeSourceClient()
+            with patch("app.vision.get_vision_client", return_value=vision), \
+                 patch("app.proxy.get_source_client", return_value=source):
+                import asyncio
+                asyncio.run(handle_chat_completion(request, _RawReq()))
+            joined = json.dumps(source.body["messages"], ensure_ascii=False)
+            assert "不是图片本身" in joined, "应注入通道说明"
+            assert "重新发送图片" in joined, "通道说明应引导重发图片触发重分析"
+        finally:
+            cfg.image.vision_channel_note = old
+            _clear_image_cache()
+
+    def test_channel_note_off_by_default(self):
+        from app.proxy import handle_chat_completion
+        from app.config import get_config
+        _clear_image_cache()
+        cfg = get_config()
+        old = cfg.image.vision_channel_note
+        cfg.image.vision_channel_note = False
+        try:
+            request = ChatCompletionRequest(
+                model="openai-vision",
+                messages=[ChatMessage(role="user", content=[
+                    {"type": "image_url", "image_url": {"url": TINY_PNG}},
+                    {"type": "text", "text": "这张图是什么?"},
+                ])],
+                stream=False,
+            )
+            vision = _FakeVisionClient()
+            source = _FakeSourceClient()
+            with patch("app.vision.get_vision_client", return_value=vision), \
+                 patch("app.proxy.get_source_client", return_value=source):
+                import asyncio
+                asyncio.run(handle_chat_completion(request, _RawReq()))
+            joined = json.dumps(source.body["messages"], ensure_ascii=False)
+            assert "重新发送图片" not in joined
+        finally:
+            cfg.image.vision_channel_note = old
+            _clear_image_cache()
+
+
+class _ScriptedToolSource:
+    """源模型：第一次返回 grassvision_view_image 工具调用，第二次返回正常回答。"""
+
+    def __init__(self):
+        self.bodies = []
+        self.calls = 0
+
+    async def post(self, url, json=None):
+        self.bodies.append(json)
+        import json as _json
+        self.calls += 1
+        if self.calls == 1:
+            return _FakeResp(200, {"choices": [{"message": {
+                "role": "assistant", "content": None,
+                "tool_calls": [{"id": "call_1", "type": "function", "function": {
+                    "name": "grassvision_view_image",
+                    "arguments": _json.dumps({"question": "按钮是什么颜色"})}}],
+            }}], "usage": {}})
+        return _FakeResp(200, {"choices": [{"message": {"role": "assistant", "content": "按钮是蓝色渐变。"}}], "usage": {}})
+
+    async def aclose(self):
+        pass
+
+
+class TestReexamineTool:
+    """协议化服务端重看：源模型自主调用 view_image，服务端执行重看后喂回再回答。"""
+
+    def test_service_side_reexamine_loop(self):
+        from app.proxy import handle_chat_completion
+        from app.config import get_config
+        _clear_image_cache()
+        cfg = get_config()
+        model = cfg.models["openai-vision"]
+        old = model.vision_reexamine
+        model.vision_reexamine = True
+        try:
+            request = ChatCompletionRequest(
+                model="openai-vision",
+                messages=[ChatMessage(role="user", content=[
+                    {"type": "image_url", "image_url": {"url": TINY_PNG}},
+                    {"type": "text", "text": "这个按钮什么颜色?"},
+                ])],
+                stream=False,
+            )
+            vision = _FakeVisionClient()
+            source = _ScriptedToolSource()
+            with patch("app.vision.get_vision_client", return_value=vision), \
+                 patch("app.proxy.get_source_client", return_value=source):
+                import asyncio
+                resp = asyncio.run(handle_chat_completion(request, _RawReq()))
+            data = json.loads(resp.body)
+            assert data["choices"][0]["message"]["content"] == "按钮是蓝色渐变。"
+            assert source.calls == 2, "源模型应被调用两次（工具循环）"
+            # 第一次请求应注入工具
+            tools = source.bodies[0].get("tools", [])
+            names = [t.get("function", {}).get("name") for t in tools]
+            assert "grassvision_view_image" in names, "应注入 view_image 工具"
+            # 第二次请求应含 tool 结果（服务端已执行重看）
+            tool_msgs = [m for m in source.bodies[1]["messages"] if m.get("role") == "tool"]
+            assert len(tool_msgs) == 1, "应有 1 条 tool 结果消息"
+            assert tool_msgs[0]["tool_call_id"] == "call_1"
+            assert len(vision.post_calls) == 2, "首次分析 + 重看各 1 次视觉调用"
+        finally:
+            model.vision_reexamine = old
+            _clear_image_cache()
+
+    def test_no_tool_injected_when_disabled(self):
+        from app.proxy import handle_chat_completion
+        from app.config import get_config
+        _clear_image_cache()
+        cfg = get_config()
+        model = cfg.models["openai-vision"]
+        old = model.vision_reexamine
+        model.vision_reexamine = False
+        try:
+            request = ChatCompletionRequest(
+                model="openai-vision",
+                messages=[ChatMessage(role="user", content=[
+                    {"type": "image_url", "image_url": {"url": TINY_PNG}},
+                    {"type": "text", "text": "这张图是什么?"},
+                ])],
+                stream=False,
+            )
+            vision = _FakeVisionClient()
+            source = _FakeSourceClient()
+            with patch("app.vision.get_vision_client", return_value=vision), \
+                 patch("app.proxy.get_source_client", return_value=source):
+                import asyncio
+                asyncio.run(handle_chat_completion(request, _RawReq()))
+            tools = source.body.get("tools") or []
+            names = [t.get("function", {}).get("name") for t in tools]
+            assert "grassvision_view_image" not in names, "关闭时不应注入工具"
+        finally:
+            model.vision_reexamine = old
+            _clear_image_cache()
+
+
+class _ScriptedToolStreamSource:
+    """流式源模型：第一轮流输出 view_image 工具增量，第二轮流输出正常回答。"""
+
+    def __init__(self):
+        self.bodies = []
+        self.calls = 0
+
+    def stream(self, method, url, json=None):
+        self.bodies.append(json)
+        self.calls += 1
+        if self.calls == 1:
+            lines = [
+                'data: {"choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_s1","type":"function","function":{"name":"grassvision_view_image","arguments":""}}]}}]}',
+                'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"question\\":\\"颜色\\"}"}}]}}]}',
+                'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}',
+                'data: [DONE]',
+            ]
+        else:
+            lines = [
+                'data: {"choices":[{"delta":{"role":"assistant","content":"最终回答"}}]}',
+                'data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}',
+                'data: [DONE]',
+            ]
+        return _FakeStreamCtx(_FakeStreamResp(lines))
+
+
+class TestStreamReexamine:
+    """流式服务端重看：吞掉工具轮，客户端只看到最终回答流。"""
+
+    def test_stream_swallows_tool_round(self):
+        from app.proxy import handle_chat_completion
+        from app.config import get_config
+        _clear_image_cache()
+        cfg = get_config()
+        model = cfg.models["openai-vision"]
+        old_r = model.vision_reexamine
+        old_s = cfg.image.stream_vision_thinking
+        model.vision_reexamine = True
+        cfg.image.stream_vision_thinking = False
+        try:
+            request = ChatCompletionRequest(
+                model="openai-vision",
+                messages=[ChatMessage(role="user", content=[
+                    {"type": "image_url", "image_url": {"url": TINY_PNG}},
+                    {"type": "text", "text": "这个按钮什么颜色?"},
+                ])],
+                stream=True,
+            )
+            vision = _FakeVisionClient()
+            source = _ScriptedToolStreamSource()
+            with patch("app.vision.get_vision_client", return_value=vision), \
+                 patch("app.proxy.get_source_client", return_value=source):
+                import asyncio
+                resp = asyncio.run(handle_chat_completion(request, _RawReq()))
+
+                async def collect():
+                    chunks = []
+                    async for f in resp.body_iterator:
+                        chunks.append(f)
+                    return chunks
+
+                frames = asyncio.run(collect())
+            all_text = "".join(frames)
+            assert "grassvision_view_image" not in all_text, "工具帧不应泄漏给客户端"
+            assert "tool_calls" not in all_text
+            assert "最终回答" in all_text, "重看后的最终回答应到达客户端"
+            assert source.calls == 2, "源模型应被调用两次（工具轮被吞后重发）"
+            tool_msgs = [m for m in source.bodies[1]["messages"] if m.get("role") == "tool"]
+            assert len(tool_msgs) == 1, "第二轮应携带工具结果"
+            assert len(vision.post_calls) == 2, "首次分析 + 重看各 1 次"
+        finally:
+            model.vision_reexamine = old_r
+            cfg.image.stream_vision_thinking = old_s
+            _clear_image_cache()
+
+    def test_client_own_tools_passthrough(self):
+        """客户端自己的工具调用应原样透传（不影响 harness 自带工具）。"""
+        from app.proxy import _collect_tool_calls, _assistant_msg_with_tool_calls, _strip_view_image_tool
+        deltas = [
+            {"index": 0, "id": "c1", "type": "function", "function": {"name": "browse", "arguments": ""}},
+            {"index": 0, "function": {"arguments": "{\"url\":\"x\"}"}},
+        ]
+        calls = _collect_tool_calls(deltas)
+        assert calls[0]["function"]["name"] == "browse"
+        msg = _assistant_msg_with_tool_calls(calls)
+        assert msg["tool_calls"][0]["function"]["arguments"] == '{"url":"x"}'
+        # 移除注入工具不影响客户端工具
+        body = {"tools": [{"type": "function", "function": {"name": "browse"}},
+                          {"type": "function", "function": {"name": "grassvision_view_image"}}]}
+        stripped = _strip_view_image_tool(body)
+        names = [t["function"]["name"] for t in stripped["tools"]]
+        assert names == ["browse"]
+
+
+class TestFusedStream:
+    """融合版：视觉思考流 + 流式服务端重看同时工作。"""
+
+    def test_fused_vision_thinking_and_reexamine(self):
+        from app.proxy import handle_chat_completion
+        from app.config import get_config
+        _clear_image_cache()
+        cfg = get_config()
+        model = cfg.models["openai-vision"]
+        old_r = model.vision_reexamine
+        old_s = cfg.image.stream_vision_thinking
+        old_p = cfg.image.vision_stream_prelude
+        model.vision_reexamine = True
+        cfg.image.stream_vision_thinking = True
+        cfg.image.vision_stream_prelude = False
+        try:
+            request = ChatCompletionRequest(
+                model="openai-vision",
+                messages=[ChatMessage(role="user", content=[
+                    {"type": "image_url", "image_url": {"url": TINY_PNG}},
+                    {"type": "text", "text": "这个按钮什么颜色?"},
+                ])],
+                stream=True,
+            )
+            source = _ScriptedToolStreamSource()
+            with patch("app.vision._call_vision_model_stream", new=_fake_vision_stream), \
+                 patch("app.proxy.get_source_client", return_value=source):
+                import asyncio
+                resp = asyncio.run(handle_chat_completion(request, _RawReq()))
+
+                async def collect():
+                    chunks = []
+                    async for f in resp.body_iterator:
+                        chunks.append(f)
+                    return chunks
+
+                frames = asyncio.run(collect())
+            all_text = "".join(frames)
+            # 阶段 1 视觉思考可见
+            assert "我先分析这张图片" in all_text, "阶段1视觉思考应推给客户端"
+            # 工具轮被吞、无泄漏
+            assert "grassvision_view_image" not in all_text
+            assert "tool_calls" not in all_text
+            # 重看视觉思考② + 最终回答
+            assert all_text.count("这是分析结果正文") >= 2, "阶段1分析 + 重看分析都应进入思考链"
+            assert "最终回答" in all_text
+            assert source.calls == 2
+        finally:
+            model.vision_reexamine = old_r
+            cfg.image.stream_vision_thinking = old_s
+            cfg.image.vision_stream_prelude = old_p
+            _clear_image_cache()
+
+
+class TestCrossTurnReexamine:
+    """跨轮次无感重看：第二轮无当前图片时，仍注入工具允许重看历史图片。"""
+
+    def test_no_image_turn_injects_tool(self):
+        from app.proxy import handle_chat_completion
+        from app.config import get_config
+        _clear_image_cache()
+        cfg = get_config()
+        model = cfg.models["openai-vision"]
+        old = model.vision_reexamine
+        model.vision_reexamine = True
+        try:
+            # 第二轮：历史有图（被剥离），当前轮纯文字追问
+            request = ChatCompletionRequest(
+                model="openai-vision",
+                messages=[
+                    ChatMessage(role="user", content=[
+                        {"type": "image_url", "image_url": {"url": TINY_PNG}},
+                        {"type": "text", "text": "看这张图"},
+                    ]),
+                    ChatMessage(role="assistant", content="看到了。"),
+                    ChatMessage(role="user", content="刚才图里的按钮什么颜色?"),
+                ],
+                stream=False,
+            )
+            vision = _FakeVisionClient()
+            source = _FakeSourceClient()
+            with patch("app.vision.get_vision_client", return_value=vision), \
+                 patch("app.proxy.get_source_client", return_value=source):
+                import asyncio
+                asyncio.run(handle_chat_completion(request, _RawReq()))
+            tools = source.body.get("tools") or []
+            names = [t.get("function", {}).get("name") for t in tools]
+            assert "grassvision_view_image" in names, "无当前图片时也应注入重看工具（历史图可重看）"
+        finally:
+            model.vision_reexamine = old
+            _clear_image_cache()
+
+
+class TestUsageAggregation:
+    """重看用量聚合 + 缓存命中率口径。"""
+
+    def test_reexamine_aggregates_source_usage(self):
+        from app.proxy import _forward_with_reexamine
+        from app.config import get_config
+        _clear_image_cache()
+        cfg = get_config()
+        model = cfg.models["openai-vision"]
+        old = model.vision_reexamine
+        model.vision_reexamine = True
+        try:
+            # 源客户端：第一轮 tool_call（usage 5），第二轮回答（usage 10）
+            class _AggSource:
+                def __init__(self):
+                    self.calls = 0
+
+                async def post(self, url, json=None):
+                    import json as _json
+                    self.calls += 1
+                    if self.calls == 1:
+                        return _FakeResp(200, {"choices": [{"message": {
+                            "role": "assistant", "content": None,
+                            "tool_calls": [{"id": "c1", "type": "function", "function": {
+                                "name": "grassvision_view_image",
+                                "arguments": _json.dumps({"question": "颜色"})}}],
+                        }}], "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}})
+                    return _FakeResp(200, {"choices": [{"message": {"role": "assistant", "content": "蓝色"}}],
+                                           "usage": {"prompt_tokens": 10, "completion_tokens": 7, "total_tokens": 17}})
+
+                async def aclose(self):
+                    pass
+
+            source = _AggSource()
+            vision = _FakeVisionClient()
+            body = {"model": "openai-vision", "messages": [{"role": "user", "content": "看这张图"}]}
+            with patch("app.vision.get_vision_client", return_value=vision), \
+                 patch("app.proxy.get_source_client", return_value=source):
+                import asyncio
+                resp, agg_source, agg_vision = asyncio.run(_forward_with_reexamine(
+                    body=body, provider_key="openai",
+                    public_model_id="openai-vision", model=model,
+                    images=[],
+                    raw_request=type("R", (), {})(),
+                ))
+            assert agg_source.get("prompt_tokens") == 15, "多轮 source usage 应聚合"
+            assert agg_source.get("total_tokens") == 25
+            assert source.calls == 2
+        finally:
+            model.vision_reexamine = old
             _clear_image_cache()
