@@ -141,7 +141,14 @@ def _is_grassvision_tool(name: str) -> bool:
 
 
 def _inject_grassvision_tools(body: dict, reexamine: bool, pixel_tools: bool) -> dict:
-    """注入 GrassVision 服务端工具（按开关）：view_image（重看）+ 像素工具。
+    """注入 GrassVision 服务端工具。
+
+    默认只暴露 view_image（服务端重看）：源模型"要求重看"即可让服务端把
+    目标细节（含主色等像素证据，见 _execute_grassvision_tool 增强）一次性分析回来，
+    避免暴露像素细节工具导致源模型逐个细节反复调用（重看死循环的诱因）。
+
+    pixel_tools 开启时才额外暴露 grassvision_pixel_* / ui_diff 高级工具
+    （默认关闭；需要 UI 还原闭环等场景再开）。
 
     始终追加（客户端自带工具时也注入）——追加是核心功能。
     混合工具轮（grassvision + 客户端工具同时被调用）由服务端完整闭环：
@@ -181,7 +188,7 @@ def _strip_grassvision_tools(body: dict) -> dict:
     return {**body, "tools": tools}
 
 # 服务端重看最大轮数（一次请求内模型最多自主重看几次）
-MAX_REEXAMINE_ROUNDS = 3
+MAX_REEXAMINE_ROUNDS = 2
 
 
 def _collect_tool_calls(tool_deltas: list[dict]) -> list[dict]:
@@ -264,11 +271,26 @@ async def _execute_grassvision_tool(
     url = images[0].url
 
     if name == "grassvision_view_image":
-        return await reexamine_image(
+        result = await reexamine_image(
             url, str(args.get("question", "") or ""), args.get("region"),
             model, getattr(raw_request, "_httpx_client", None),
             usage_accumulator=usage_accumulator,
         )
+        # 增强：重看时自动附目标区域主色（本地像素算法）——
+        # 让一次重看"文本细节 + 像素证据"一步到位，源模型无需再为
+        # 精确色值单独反复调用（抑制重看死循环的诱因）。
+        try:
+            raw = await _resolve_image_raw(url, getattr(raw_request, "_httpx_client", None))
+            if raw:
+                colors = PT.dominant_colors(raw, region=args.get("region"), top=3)
+                if colors:
+                    color_txt = "，".join(
+                        f"{c['color']}（{c['share'] * 100:.0f}%）" for c in colors
+                    )
+                    result = f"{result}\n\n【该区域主色】{color_txt}"
+        except Exception:
+            pass
+        return result
 
     # 本地像素工具（确定性算法）
     raw = await _resolve_image_raw(url, getattr(raw_request, "_httpx_client", None))
@@ -590,6 +612,14 @@ async def _stream_with_reexamine(
                 tool_calls, reasoning_content="".join(round_reasoning),
             )
             body["messages"] = list(body.get("messages") or []) + [assistant_msg]
+
+            # 吞掉工具轮后、重看执行前：推一条状态帧，保证客户端持续有帧
+            # （避免 dsh 等客户端在重看静默期超时断开导致 TRANSPORT 重试）
+            if stream_vision:
+                sframe, is_first["value"] = _build_vision_frame(
+                    "（正在重新分析图片…）", public_model_id, stream_id, is_first["value"]
+                )
+                yield sframe
 
             if _round >= MAX_REEXAMINE_ROUNDS:
                 # 达到上限：移除工具 + 说明，强制下一轮直接回答
