@@ -149,6 +149,10 @@ and non-streaming.
 
 ## 🎛️ Admin UI
 
+<p align="center">
+  <img src="assets/admin-dashboard.png" alt="GrassVision admin dashboard" width="100%">
+</p>
+
 ```
 http://127.0.0.1:8042/admin
 ```
