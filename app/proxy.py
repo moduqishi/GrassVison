@@ -141,7 +141,14 @@ def _is_grassvision_tool(name: str) -> bool:
 
 
 def _inject_grassvision_tools(body: dict, reexamine: bool, pixel_tools: bool) -> dict:
-    """注入 GrassVision 服务端工具（按开关）：view_image（重看）+ 像素工具。"""
+    """注入 GrassVision 服务端工具（按开关）：view_image（重看）+ 像素工具。
+
+    客户端已自带工具（CherryStudio 的 MCP/内置工具等）时**不注入**：
+    避免源模型同时调用两类工具导致 assistant(tool_calls) 缺少对应 tool 消息
+    的上游校验错误（insufficient tool messages）。
+    """
+    if body.get("tools"):
+        return body  # 客户端有自己的工具生态，不注入（客户端工具由客户端自己执行）
     tools = list(body.get("tools") or [])
     existing = {
         t.get("function", {}).get("name") for t in tools
@@ -388,6 +395,10 @@ async def _forward_with_reexamine(
         ]
         if not gv_calls:
             return resp, agg_source, agg_vision
+        if len(gv_calls) != len(tool_calls):
+            # 混合工具调用（含客户端自己的工具）：整轮透传给客户端，
+            # 由客户端执行它认识的工具（避免悬空 tool_call_id 导致上游校验错误）
+            return resp, agg_source, agg_vision
 
         if _round >= MAX_REEXAMINE_ROUNDS:
             # 达到重看上限：把 assistant 消息与工具说明追加进对话，
@@ -507,9 +518,11 @@ async def _stream_with_reexamine(
                                         (tc.get("function") or {}).get("name") or ""
                                         for tc in tcs if isinstance(tc, dict)
                                     ]
-                                    if any(_is_grassvision_tool(n) for n in names):
+                                    # 只有"全部是 grassvision_*"才吞掉该轮；
+                                    # 混入客户端自己的工具时保持 forward 透传整轮，
+                                    # 由客户端执行它认识的工具（避免悬空 tool_call_id）
+                                    if names and all(_is_grassvision_tool(n) for n in names):
                                         mode = "swallow"
-                                    # 客户端自己的工具：保持 forward 正常转发
                                 if mode == "swallow":
                                     tool_deltas.extend(tcs)
                                     continue

@@ -1460,3 +1460,72 @@ class TestCrossTurnStreamReexamineThinking:
             cfg.image.vision_reexamine = old_r
             cfg.image.stream_vision_thinking = old_s
             _clear_image_cache()
+
+
+class TestToolConflictGuard:
+    """客户端自带工具时不注入 grassvision 工具；混合工具轮整轮透传。"""
+
+    def test_no_inject_when_client_has_tools(self):
+        from app.proxy import _inject_grassvision_tools
+        body = {"tools": [{"type": "function", "function": {"name": "client_tool"}}]}
+        out = _inject_grassvision_tools(body, reexamine=True, pixel_tools=True)
+        names = [t["function"]["name"] for t in out["tools"]]
+        assert names == ["client_tool"], "客户端自带工具时不应注入 grassvision 工具"
+        assert "grassvision_view_image" not in names
+
+    def test_inject_when_no_client_tools(self):
+        from app.proxy import _inject_grassvision_tools
+        body = {"messages": []}
+        out = _inject_grassvision_tools(body, reexamine=True, pixel_tools=True)
+        names = [t["function"]["name"] for t in out.get("tools", [])]
+        assert "grassvision_view_image" in names
+        assert "grassvision_pixel_colors" in names
+
+    def test_mixed_tool_round_passthrough(self):
+        """混合工具调用（grassvision + 客户端工具）→ 整轮透传，不吞掉。"""
+        from app.proxy import handle_chat_completion
+        from app.config import get_config
+        _clear_image_cache()
+        cfg = get_config()
+        old = cfg.image.vision_reexamine
+        cfg.image.vision_reexamine = True
+        try:
+            class _MixedSource:
+                def __init__(self):
+                    self.calls = 0
+
+                async def post(self, url, json=None):
+                    self.calls += 1
+                    return _FakeResp(200, {"choices": [{"message": {
+                        "role": "assistant", "content": None,
+                        "tool_calls": [
+                            {"id": "c1", "type": "function", "function": {"name": "grassvision_view_image", "arguments": '{"question":"颜色"}'}},
+                            {"id": "c2", "type": "function", "function": {"name": "client_tool", "arguments": "{}"}},
+                        ]}}], "usage": {}})
+
+                async def aclose(self):
+                    pass
+
+            source = _MixedSource()
+            vision = _FakeVisionClient()
+            request = ChatCompletionRequest(
+                model="openai-vision",
+                messages=[ChatMessage(role="user", content=[
+                    {"type": "image_url", "image_url": {"url": TINY_PNG}},
+                    {"type": "text", "text": "看这张图"},
+                ])],
+                stream=False,
+            )
+            with patch("app.vision.get_vision_client", return_value=vision), \
+                 patch("app.proxy.get_source_client", return_value=source):
+                import asyncio
+                resp = asyncio.run(handle_chat_completion(request, _RawReq()))
+            data = json.loads(resp.body)
+            msg = data["choices"][0]["message"]
+            assert msg.get("tool_calls"), "混合工具轮应透传给客户端"
+            names = [tc["function"]["name"] for tc in msg["tool_calls"]]
+            assert "client_tool" in names and "grassvision_view_image" in names
+            assert source.calls == 1, "混合工具轮不应进入服务端工具循环"
+        finally:
+            cfg.image.vision_reexamine = old
+            _clear_image_cache()
