@@ -572,7 +572,10 @@ async def _stream_with_reexamine(
                 pass  # 连接池化，不在调用点关闭
 
             if not finished and mode == "forward":
-                # 流异常中断但已转发——结束
+                # 流异常中断但已转发——补 finish_reason + [DONE] 保证流完整结束
+                f1, f2 = _stream_end_frames(public_model_id, stream_id)
+                yield f1
+                yield f2
                 return
 
             if mode == "forward":
@@ -819,6 +822,24 @@ def _build_vision_frame(
         "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
     }
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n", False
+
+
+def _stream_end_frames(public_model_id: str, stream_id: str = "") -> tuple[str, str]:
+    """构造流式结束帧：finish_reason 帧 + [DONE]。
+
+    客户端（dsh/OpenAI 兼容）校验 finish_reason：上游断流时若只补 [DONE]
+    仍会报 "Stream ended without finish_reason"。先补 finish_reason 帧再补 [DONE]。
+    """
+    if not stream_id:
+        stream_id = f"chatcmpl-{uuid.uuid4().hex}"
+    finish = json.dumps({
+        "id": stream_id,
+        "object": "chat.completion.chunk",
+        "created": int(time.time()),
+        "model": public_model_id,
+        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+    })
+    return f"data: {finish}\n\n", "data: [DONE]\n\n"
 
 
 async def handle_chat_completion(
@@ -1160,10 +1181,14 @@ async def _iter_source_stream(
                     yield line + "\n"
     except httpx.TimeoutException:
         yield f"data: {json.dumps({'error': {'message': 'Source model timeout'}})}\n\n"
-        yield "data: [DONE]\n\n"
+        f1, f2 = _stream_end_frames(public_model_id)
+        yield f1
+        yield f2
         return
-    # 上游流自然结束（未收到 [DONE]）→ 补发，避免客户端 "Stream ended without finish_reason"
-    yield "data: [DONE]\n\n"
+    # 上游流自然结束（未收到 finish_reason/[DONE]）→ 补发结束帧，避免 TRANSPORT 重试
+    f1, f2 = _stream_end_frames(public_model_id)
+    yield f1
+    yield f2
     # 连接池化：client 由 providers 池统一管理，不在调用点关闭
 
 

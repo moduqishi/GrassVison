@@ -1613,3 +1613,68 @@ class TestReasoningPassthrough:
             cfg.image.vision_reexamine = old_r
             cfg.image.stream_vision_thinking = old_s
             _clear_image_cache()
+
+
+class TestStreamFinishReason:
+    """流异常中断（上游未发 [DONE]）时，必须补 finish_reason + [DONE]。"""
+
+    def test_interrupted_stream_gets_finish_reason(self):
+        from app.proxy import handle_chat_completion
+        from app.config import get_config
+        _clear_image_cache()
+        cfg = get_config()
+        old_r = cfg.image.vision_reexamine
+        old_s = cfg.image.stream_vision_thinking
+        cfg.image.vision_reexamine = True
+        cfg.image.stream_vision_thinking = False
+        try:
+            class _InterruptSource:
+                def __init__(self):
+                    self.calls = 0
+
+                def stream(self, method, url, json=None):
+                    self.calls += 1
+                    if self.calls == 1:
+                        # 工具轮（无 [DONE]，正常：工具轮被吞）
+                        lines = [
+                            'data: {"choices":[{"delta":{"role":"assistant","reasoning_content":"思考中…"}}]}',
+                            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_x","type":"function","function":{"name":"grassvision_view_image","arguments":"{}"}}]}}]}',
+                            'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}',
+                        ]
+                    else:
+                        # 第二轮流：只发思考帧，然后自然结束（无 [DONE]）→ 上游断流模拟
+                        lines = [
+                            'data: {"choices":[{"delta":{"role":"assistant","reasoning_content":"思考特别长…"}}]}',
+                            'data: {"choices":[{"delta":{"content":"回答"}}]}',
+                        ]
+                    return _FakeStreamCtx(_FakeStreamResp(lines))
+
+            source = _InterruptSource()
+            request = ChatCompletionRequest(
+                model="openai-vision",
+                messages=[ChatMessage(role="user", content=[
+                    {"type": "image_url", "image_url": {"url": TINY_PNG}},
+                    {"type": "text", "text": "这张图?"},
+                ])],
+                stream=True,
+            )
+            with patch("app.vision._call_vision_model_stream", new=_fake_vision_stream), \
+                 patch("app.vision.get_vision_client", return_value=_FakeVisionClient()), \
+                 patch("app.proxy.get_source_client", return_value=source):
+                import asyncio
+                resp = asyncio.run(handle_chat_completion(request, _RawReq()))
+
+                async def collect():
+                    chunks = []
+                    async for f in resp.body_iterator:
+                        chunks.append(f)
+                    return chunks
+
+                frames = asyncio.run(collect())
+            all_text = "".join(frames)
+            assert '"finish_reason": "stop"' in all_text, "流中断必须补 finish_reason 帧"
+            assert all_text.rstrip().endswith("data: [DONE]"), f"流必须以 [DONE] 结尾，实际末尾 {all_text[-40:]!r}"
+        finally:
+            cfg.image.vision_reexamine = old_r
+            cfg.image.stream_vision_thinking = old_s
+            _clear_image_cache()
