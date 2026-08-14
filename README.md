@@ -148,8 +148,6 @@ http://127.0.0.1:8042/admin
 
 默认 `admin / admin123`。
 
-<img src="assets/dashboard.png" alt="GrassVision 管理首页预览" width="100%"/>
-
 | 菜单 | 用途 |
 |---|---|
 | 📊 管理首页 | 服务总览：渠道/模型统计、运行状态、快捷入口 |
