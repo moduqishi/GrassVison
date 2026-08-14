@@ -17,9 +17,24 @@ geometry available by default, with zero client awareness.
 [![Tests](https://img.shields.io/badge/tests-128%20passed-22c55e.svg)]()
 [![Vision Providers](https://img.shields.io/badge/vision%20channels-3%20%E6%94%AF%E6%8C%81-8b5cf6.svg)]()
 [![API](https://img.shields.io/badge/API-Chat%20%2B%20Anthropic%20%2B%20Responses-3b82f6.svg)]()
-[![中文文档](https://img.shields.io/badge/lang-%E4%B8%AD%E6%96%87-0ea5e9.svg)](README.md)
+[![English](https://img.shields.io/badge/lang-English-3b82f6.svg)]()
+[![中文](https://img.shields.io/badge/lang-%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87-0ea5e9.svg)](README.md)
+
+> **🌐 Language：** [English](README.en.md) | [中文](README.md)
 
 </div>
+
+---
+
+## 📸 Showcase (see it first)
+
+<p align="center">
+  <img src="assets/replica-showcase.png" alt="Pixel-perfect UI replica driven by GrassVision" width="100%">
+</p>
+
+> Above is a **real replica driven by GrassVision**: AI recognizes the target UI →
+> plans tasks → writes HTML/CSS → pixel-perfect replica, **zero human
+> intervention** — the result is nearly indistinguishable from the original.
 
 ---
 
