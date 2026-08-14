@@ -210,8 +210,17 @@ def _collect_tool_calls(tool_deltas: list[dict]) -> list[dict]:
     return out
 
 
-def _assistant_msg_with_tool_calls(tool_calls: list[dict]) -> dict:
-    return {"role": "assistant", "content": None, "tool_calls": tool_calls}
+def _assistant_msg_with_tool_calls(tool_calls: list[dict], reasoning_content: str = "") -> dict:
+    """构造含 tool_calls 的 assistant 消息。
+
+    thinking 模式下，历史 assistant 消息的 reasoning_content 必须回传上游
+    （否则报 "reasoning_content in the thinking mode must be passed back"）。
+    流式吞掉工具轮时需收集并回填 reasoning 增量。
+    """
+    msg: dict = {"role": "assistant", "content": None, "tool_calls": tool_calls}
+    if reasoning_content:
+        msg["reasoning_content"] = reasoning_content
+    return msg
 
 
 def _accum_usage(target: dict, usage: dict | None) -> None:
@@ -485,6 +494,7 @@ async def _stream_with_reexamine(
             client = get_source_client(provider)
             mode = "forward"      # forward=转发给客户端 | swallow=吞掉工具轮
             tool_deltas: list[dict] = []
+            round_reasoning: list[str] = []  # 本轮 reasoning 增量（thinking 模式须回传上游）
             finished = False
             try:
                 async with client.stream("POST", "/chat/completions", json=body) as resp:
@@ -518,6 +528,14 @@ async def _stream_with_reexamine(
                                 continue
                             delta = ((data.get("choices") or [{}])[0].get("delta")) or {}
                             tcs = delta.get("tool_calls")
+                            # thinking 模式下，工具轮可能同时携带 reasoning_content——
+                            # 整轮收集（forward 照常转发该帧），swallow 时回填进
+                            # 构造的 assistant 消息（上游要求历史回传 reasoning）
+                            reasoning = (delta.get("reasoning_content")
+                                         or delta.get("reasoning")
+                                         or delta.get("thinking"))
+                            if reasoning:
+                                round_reasoning.append(reasoning)
                             if tcs:
                                 if mode == "forward":
                                     # 首帧工具调用：按工具名分流
@@ -564,7 +582,10 @@ async def _stream_with_reexamine(
             tool_calls = _collect_tool_calls(tool_deltas)
             if not any(_is_grassvision_tool(tc.get("function", {}).get("name", "")) for tc in tool_calls):
                 return
-            assistant_msg = _assistant_msg_with_tool_calls(tool_calls)
+            # 回填本轮 reasoning_content（thinking 模式上游要求历史回传）
+            assistant_msg = _assistant_msg_with_tool_calls(
+                tool_calls, reasoning_content="".join(round_reasoning),
+            )
             body["messages"] = list(body.get("messages") or []) + [assistant_msg]
 
             if _round >= MAX_REEXAMINE_ROUNDS:
@@ -1140,6 +1161,9 @@ async def _iter_source_stream(
     except httpx.TimeoutException:
         yield f"data: {json.dumps({'error': {'message': 'Source model timeout'}})}\n\n"
         yield "data: [DONE]\n\n"
+        return
+    # 上游流自然结束（未收到 [DONE]）→ 补发，避免客户端 "Stream ended without finish_reason"
+    yield "data: [DONE]\n\n"
     # 连接池化：client 由 providers 池统一管理，不在调用点关闭
 
 

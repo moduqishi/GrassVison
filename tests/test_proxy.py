@@ -1540,3 +1540,76 @@ class TestToolConflictGuard:
         finally:
             cfg.image.vision_reexamine = old
             _clear_image_cache()
+
+
+class TestReasoningPassthrough:
+    """流式吞掉工具轮时，assistant 消息必须回传 reasoning_content（thinking 模式）。"""
+
+    def test_swallowed_tool_round_keeps_reasoning(self):
+        from app.proxy import handle_chat_completion
+        from app.config import get_config
+        _clear_image_cache()
+        cfg = get_config()
+        old_r = cfg.image.vision_reexamine
+        old_s = cfg.image.stream_vision_thinking
+        cfg.image.vision_reexamine = True
+        cfg.image.stream_vision_thinking = False
+        try:
+            class _ReasoningToolSource:
+                def __init__(self):
+                    self.bodies = []
+                    self.calls = 0
+
+                def stream(self, method, url, json=None):
+                    self.bodies.append(json)
+                    self.calls += 1
+                    if self.calls == 1:
+                        lines = [
+                            'data: {"choices":[{"delta":{"role":"assistant","reasoning_content":"我需要重新看这张图…"}}]}',
+                            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_r1","type":"function","function":{"name":"grassvision_view_image","arguments":""}}]}}]}',
+                            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"question\\":\\"颜色\\"}"}}]}}]}',
+                            'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}',
+                            'data: [DONE]',
+                        ]
+                    else:
+                        lines = [
+                            'data: {"choices":[{"delta":{"role":"assistant","content":"最终回答"}}]}',
+                            'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+                            'data: [DONE]',
+                        ]
+                    return _FakeStreamCtx(_FakeStreamResp(lines))
+
+            source = _ReasoningToolSource()
+            request = ChatCompletionRequest(
+                model="openai-vision",
+                messages=[ChatMessage(role="user", content=[
+                    {"type": "image_url", "image_url": {"url": TINY_PNG}},
+                    {"type": "text", "text": "这个按钮什么颜色?"},
+                ])],
+                stream=True,
+            )
+            with patch("app.vision._call_vision_model_stream", new=_fake_vision_stream), \
+                 patch("app.vision.get_vision_client", return_value=_FakeVisionClient()), \
+                 patch("app.proxy.get_source_client", return_value=source):
+                import asyncio
+                resp = asyncio.run(handle_chat_completion(request, _RawReq()))
+
+                async def collect():
+                    chunks = []
+                    async for f in resp.body_iterator:
+                        chunks.append(f)
+                    return chunks
+
+                frames = asyncio.run(collect())
+            all_text = "".join(frames)
+            assert "最终回答" in all_text
+            # 第二轮请求的 assistant 消息必须包含 reasoning_content（thinking 模式回传）
+            assistant_msgs = [m for m in source.bodies[1]["messages"] if m.get("role") == "assistant"]
+            tool_assistant = [m for m in assistant_msgs if m.get("tool_calls")]
+            assert tool_assistant, "第二轮应有带 tool_calls 的 assistant 消息"
+            assert "我需要重新看这张图" in tool_assistant[-1].get("reasoning_content", ""), \
+                f"吞轮时的 reasoning_content 必须回传，实际 {tool_assistant[-1].get('reasoning_content', '')!r}"
+        finally:
+            cfg.image.vision_reexamine = old_r
+            cfg.image.stream_vision_thinking = old_s
+            _clear_image_cache()
