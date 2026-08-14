@@ -117,7 +117,12 @@ pixel-level facts like "this button is pure green" to the source model.
 
 ---
 
-## 🧪 Real-channel tests (cpa / vivo / minimax)
+## 🧪 Real-channel tests
+
+> **Tested environment**: source model **DeepSeek V4 Flash** · vision model
+> **MiniMax-M3** (minimax channel) · vision channels vivo / cpa failover.
+> When used in **DeepSeek Harness**, enable the enhanced-model image support
+> **manually in the config file**.
 
 | Feature | Result | Notes |
 |---|---|---|

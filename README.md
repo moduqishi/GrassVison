@@ -112,7 +112,10 @@
 
 ---
 
-## 🧪 真实渠道实测（cpa / vivo / minimax）
+## 🧪 真实渠道实测
+
+> **实测环境**：源模型 **DeepSeek V4 Flash** · 图像模型 **MiniMax-M3**（minimax 渠道）· 视觉渠道 vivo / cpa 故障转移。
+> 在 **DeepSeek Harness** 中使用时，需在配置文件**手动开启增强模型图像支持**。
 
 | 功能 | 结果 | 实测记录 |
 |---|---|---|
