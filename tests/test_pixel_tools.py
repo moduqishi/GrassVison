@@ -230,3 +230,65 @@ class _SimpleSource:
 
     async def aclose(self):
         pass
+
+
+class TestAutoPixelInjectStreaming:
+    """融合流（stream_vision_thinking 开启）下，首次分析也应自动注入主色。"""
+
+    def test_streaming_fused_injects_pixel_evidence(self):
+        from app.proxy import handle_chat_completion
+        from app.config import get_config
+        from app.image_cache import get_image_cache
+        _clear = get_image_cache()
+        asyncio.run(_clear.clear())
+        cfg = get_config()
+        old_inj = cfg.image.auto_pixel_inject
+        old_s = cfg.image.stream_vision_thinking
+        cfg.image.auto_pixel_inject = True
+        cfg.image.stream_vision_thinking = True
+        try:
+            class _StreamSource:
+                def __init__(self):
+                    self.bodies = []
+
+                def stream(self, method, url, json=None):
+                    self.bodies.append(json)
+                    lines = [
+                        'data: {"choices":[{"delta":{"role":"assistant","content":"流式回答"}}]}',
+                        'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+                        'data: [DONE]',
+                    ]
+                    return _FakeStreamCtx(_FakeStreamResp(lines))
+
+            source = _StreamSource()
+            request = ChatCompletionRequest(
+                model="openai-vision",
+                messages=[ChatMessage(role="user", content=[
+                    {"type": "image_url", "image_url": {"url": TINY_PNG}},
+                    {"type": "text", "text": "这张图什么颜色?"},
+                ])],
+                stream=True,
+            )
+            import sys
+            sys.path.insert(0, "/Users/cake/toys/GrassVison")
+            from tests.test_proxy import _RawReq, _FakeStreamCtx, _FakeStreamResp, _fake_vision_stream
+            with patch("app.vision._call_vision_model_stream", new=_fake_vision_stream), \
+                 patch("app.proxy.get_source_client", return_value=source):
+                resp = asyncio.run(handle_chat_completion(request, _RawReq()))
+
+                async def collect():
+                    chunks = []
+                    async for f in resp.body_iterator:
+                        chunks.append(f)
+                    return chunks
+
+                asyncio.run(collect())
+            # 融合流下注入的描述应含像素证据（精确色值）
+            msgs = source.bodies[0]["messages"]
+            joined = json.dumps(msgs, ensure_ascii=False)
+            assert "像素证据" in joined, f"融合流首次分析应注入像素证据，实际 {joined[-150:]}"
+            assert "#2563EB" in joined
+        finally:
+            cfg.image.auto_pixel_inject = old_inj
+            cfg.image.stream_vision_thinking = old_s
+            asyncio.run(_clear.clear())

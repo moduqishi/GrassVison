@@ -1085,10 +1085,11 @@ async def resolve_image_descriptions(
                     descriptions[pos] = structured
                     structured_used = True
 
-    # ── Phase 3.6: 像素证据自动注入（auto_pixel_inject，仅非流式）──
+    # ── Phase 3.6: 像素证据自动注入（auto_pixel_inject）──
     # 对单张当前图片自动做主色分析并追加到描述：精确色值"默认就有"，
     # 不依赖源模型是否主动调用像素工具（对冲模型不调工具的不确定性）。
-    if stream_queue is None and getattr(cfg.image, "auto_pixel_inject", False):
+    # 仅"追加"文本（不替换描述），与流式队列无冲突，融合流下同样生效。
+    if getattr(cfg.image, "auto_pixel_inject", False):
         _current_url_set = {img.url for img in images if img.position in allow_analysis_positions}
         if len(_current_url_set) == 1:
             _url = next(iter(_current_url_set))
