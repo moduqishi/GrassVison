@@ -143,12 +143,11 @@ def _is_grassvision_tool(name: str) -> bool:
 def _inject_grassvision_tools(body: dict, reexamine: bool, pixel_tools: bool) -> dict:
     """注入 GrassVision 服务端工具（按开关）：view_image（重看）+ 像素工具。
 
-    客户端已自带工具（CherryStudio 的 MCP/内置工具等）时**不注入**：
-    避免源模型同时调用两类工具导致 assistant(tool_calls) 缺少对应 tool 消息
-    的上游校验错误（insufficient tool messages）。
+    始终追加（客户端自带工具时也注入）——追加是核心功能。
+    混合工具轮（grassvision + 客户端工具同时被调用）由服务端完整闭环：
+    每条 tool_call_id 都补 tool 消息（客户端工具补"服务端无法执行"说明），
+    保证协议格式合规，不产生悬空 tool_call_id。
     """
-    if body.get("tools"):
-        return body  # 客户端有自己的工具生态，不注入（客户端工具由客户端自己执行）
     tools = list(body.get("tools") or [])
     existing = {
         t.get("function", {}).get("name") for t in tools
@@ -161,6 +160,13 @@ def _inject_grassvision_tools(body: dict, reexamine: bool, pixel_tools: bool) ->
             if tool["function"]["name"] not in existing:
                 tools.append(tool)
     return {**body, "tools": tools}
+
+
+# 客户端自己的工具在服务端无法执行时的占位说明（保证每条 tool_call_id 都有响应）
+_CLIENT_TOOL_UNEXECUTABLE = (
+    "[该工具属于客户端工具生态，GrassVision 服务端无法执行。"
+    "请基于已执行的图片分析结果回答用户，或如实告知用户此功能需要在客户端侧使用。]"
+)
 
 
 def _strip_grassvision_tools(body: dict) -> dict:
@@ -395,10 +401,6 @@ async def _forward_with_reexamine(
         ]
         if not gv_calls:
             return resp, agg_source, agg_vision
-        if len(gv_calls) != len(tool_calls):
-            # 混合工具调用（含客户端自己的工具）：整轮透传给客户端，
-            # 由客户端执行它认识的工具（避免悬空 tool_call_id 导致上游校验错误）
-            return resp, agg_source, agg_vision
 
         if _round >= MAX_REEXAMINE_ROUNDS:
             # 达到重看上限：把 assistant 消息与工具说明追加进对话，
@@ -416,16 +418,21 @@ async def _forward_with_reexamine(
             _accum_usage(agg_source, usage)
             return resp, agg_source, agg_vision
 
-        # 服务端执行 grassvision_* 工具：把 assistant 消息（含 tool_calls）与
-        # 工具结果追加进对话再转发（客户端无感知）
+        # 服务端完整闭环：对**每条** tool_call 补 tool 消息——
+        # grassvision_* 服务端执行真实结果；客户端自己的工具补"无法执行"说明，
+        # 保证 assistant(tool_calls) 的每个 tool_call_id 都有响应（上游不报错）。
         body["messages"] = list(body.get("messages") or []) + [msg]
-        for tc in gv_calls:
-            try:
-                result_text = await _execute_grassvision_tool(
-                    tc, images, model, raw_request, usage_accumulator=agg_vision,
-                )
-            except Exception as e:
-                result_text = f"[工具执行失败: {e}]"
+        for tc in tool_calls:
+            name = tc.get("function", {}).get("name", "")
+            if _is_grassvision_tool(name):
+                try:
+                    result_text = await _execute_grassvision_tool(
+                        tc, images, model, raw_request, usage_accumulator=agg_vision,
+                    )
+                except Exception as e:
+                    result_text = f"[工具执行失败: {e}]"
+            else:
+                result_text = _CLIENT_TOOL_UNEXECUTABLE
             body["messages"].append({
                 "role": "tool", "tool_call_id": tc.get("id"), "content": result_text,
             })
@@ -518,10 +525,10 @@ async def _stream_with_reexamine(
                                         (tc.get("function") or {}).get("name") or ""
                                         for tc in tcs if isinstance(tc, dict)
                                     ]
-                                    # 只有"全部是 grassvision_*"才吞掉该轮；
-                                    # 混入客户端自己的工具时保持 forward 透传整轮，
-                                    # 由客户端执行它认识的工具（避免悬空 tool_call_id）
-                                    if names and all(_is_grassvision_tool(n) for n in names):
+                                    # 含 grassvision_* 就吞掉该轮（混合轮也整轮闭环）：
+                                    # 服务端对每条 tool_call 补 tool 消息，
+                                    # 客户端工具补"无法执行"说明，保证格式合规
+                                    if names and any(_is_grassvision_tool(n) for n in names):
                                         mode = "swallow"
                                 if mode == "swallow":
                                     tool_deltas.extend(tcs)
@@ -555,11 +562,7 @@ async def _stream_with_reexamine(
 
             # ── 吞掉了 grassvision_* 工具轮：服务端执行 ──
             tool_calls = _collect_tool_calls(tool_deltas)
-            gv_calls = [
-                tc for tc in tool_calls
-                if _is_grassvision_tool(tc.get("function", {}).get("name", ""))
-            ]
-            if not gv_calls:
+            if not any(_is_grassvision_tool(tc.get("function", {}).get("name", "")) for tc in tool_calls):
                 return
             assistant_msg = _assistant_msg_with_tool_calls(tool_calls)
             body["messages"] = list(body.get("messages") or []) + [assistant_msg]
@@ -569,12 +572,20 @@ async def _stream_with_reexamine(
                 body = _strip_grassvision_tools(body)
                 body["messages"].append({
                     "role": "tool",
-                    "tool_call_id": gv_calls[0].get("id", "call_none"),
+                    "tool_call_id": tool_calls[0].get("id", "call_none"),
                     "content": "[已达到工具调用次数上限，无法继续；请基于已有的图片分析信息直接回答用户。]",
                 })
                 continue
 
-            for tc in gv_calls:
+            for tc in tool_calls:
+                name = tc.get("function", {}).get("name", "")
+                if not _is_grassvision_tool(name):
+                    # 客户端自己的工具：服务端无法执行，补占位说明（格式合规）
+                    body["messages"].append({
+                        "role": "tool", "tool_call_id": tc.get("id"),
+                        "content": _CLIENT_TOOL_UNEXECUTABLE,
+                    })
+                    continue
                 if not images:
                     body["messages"].append({
                         "role": "tool", "tool_call_id": tc.get("id"),
@@ -582,7 +593,6 @@ async def _stream_with_reexamine(
                     })
                     continue
                 try:
-                    name = tc.get("function", {}).get("name", "")
                     if stream_vision and name == "grassvision_view_image":
                         # 融合版：重看的视觉增量实时推给客户端（reasoning_content 帧）
                         try:

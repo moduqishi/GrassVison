@@ -1465,13 +1465,15 @@ class TestCrossTurnStreamReexamineThinking:
 class TestToolConflictGuard:
     """客户端自带工具时不注入 grassvision 工具；混合工具轮整轮透传。"""
 
-    def test_no_inject_when_client_has_tools(self):
+    def test_inject_even_when_client_has_tools(self):
+        """客户端自带工具时也要追加 grassvision 工具（追加是核心功能）。"""
         from app.proxy import _inject_grassvision_tools
         body = {"tools": [{"type": "function", "function": {"name": "client_tool"}}]}
         out = _inject_grassvision_tools(body, reexamine=True, pixel_tools=True)
         names = [t["function"]["name"] for t in out["tools"]]
-        assert names == ["client_tool"], "客户端自带工具时不应注入 grassvision 工具"
-        assert "grassvision_view_image" not in names
+        assert "client_tool" in names, "客户端工具保留"
+        assert "grassvision_view_image" in names, "应追加 grassvision 工具"
+        assert "grassvision_pixel_colors" in names
 
     def test_inject_when_no_client_tools(self):
         from app.proxy import _inject_grassvision_tools
@@ -1481,8 +1483,10 @@ class TestToolConflictGuard:
         assert "grassvision_view_image" in names
         assert "grassvision_pixel_colors" in names
 
-    def test_mixed_tool_round_passthrough(self):
-        """混合工具调用（grassvision + 客户端工具）→ 整轮透传，不吞掉。"""
+    def test_mixed_tool_round_full_closure(self):
+        """混合工具调用（grassvision + 客户端工具）→ 服务端完整闭环：
+        每条 tool_call_id 都有 tool 消息（grassvision 真实结果 + 客户端工具占位说明），
+        最终响应不泄漏 tool_calls。"""
         from app.proxy import handle_chat_completion
         from app.config import get_config
         _clear_image_cache()
@@ -1493,15 +1497,19 @@ class TestToolConflictGuard:
             class _MixedSource:
                 def __init__(self):
                     self.calls = 0
+                    self.bodies = []
 
                 async def post(self, url, json=None):
+                    self.bodies.append(json)
                     self.calls += 1
-                    return _FakeResp(200, {"choices": [{"message": {
-                        "role": "assistant", "content": None,
-                        "tool_calls": [
-                            {"id": "c1", "type": "function", "function": {"name": "grassvision_view_image", "arguments": '{"question":"颜色"}'}},
-                            {"id": "c2", "type": "function", "function": {"name": "client_tool", "arguments": "{}"}},
-                        ]}}], "usage": {}})
+                    if self.calls == 1:
+                        return _FakeResp(200, {"choices": [{"message": {
+                            "role": "assistant", "content": None,
+                            "tool_calls": [
+                                {"id": "c1", "type": "function", "function": {"name": "grassvision_view_image", "arguments": '{"question":"颜色"}'}},
+                                {"id": "c2", "type": "function", "function": {"name": "client_tool", "arguments": "{}"}},
+                            ]}}], "usage": {}})
+                    return _FakeResp(200, {"choices": [{"message": {"role": "assistant", "content": "图片已分析。"}}], "usage": {}})
 
                 async def aclose(self):
                     pass
@@ -1522,10 +1530,13 @@ class TestToolConflictGuard:
                 resp = asyncio.run(handle_chat_completion(request, _RawReq()))
             data = json.loads(resp.body)
             msg = data["choices"][0]["message"]
-            assert msg.get("tool_calls"), "混合工具轮应透传给客户端"
-            names = [tc["function"]["name"] for tc in msg["tool_calls"]]
-            assert "client_tool" in names and "grassvision_view_image" in names
-            assert source.calls == 1, "混合工具轮不应进入服务端工具循环"
+            assert not msg.get("tool_calls"), "混合工具轮应服务端闭环，不泄漏 tool_calls"
+            assert source.calls == 2, "混合工具轮应进入服务端工具循环（执行后二次调用源模型）"
+            # 第二次请求的 tool 消息应覆盖全部 tool_call_id（含客户端工具占位）
+            tool_msgs = [m for m in source.bodies[1]["messages"] if m.get("role") == "tool"]
+            assert len(tool_msgs) == 2, "两条 tool_call 都应有响应"
+            ids = [m["tool_call_id"] for m in tool_msgs]
+            assert "c1" in ids and "c2" in ids, "所有 tool_call_id 都应有响应（不悬空）"
         finally:
             cfg.image.vision_reexamine = old
             _clear_image_cache()
