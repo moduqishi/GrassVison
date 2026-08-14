@@ -276,9 +276,9 @@ async def _execute_grassvision_tool(
             model, getattr(raw_request, "_httpx_client", None),
             usage_accumulator=usage_accumulator,
         )
-        # 增强：重看时自动附目标区域主色（本地像素算法）——
-        # 让一次重看"文本细节 + 像素证据"一步到位，源模型无需再为
-        # 精确色值单独反复调用（抑制重看死循环的诱因）。
+        # 增强：重看时自动附目标区域主色 + 图元几何（本地像素算法）——
+        # 让一次重看"文本细节 + 像素证据 + 精确几何"一步到位，源模型无需再
+        # 为色值/形状单独反复调用（抑制重看死循环的诱因）。
         try:
             raw = await _resolve_image_raw(url, getattr(raw_request, "_httpx_client", None))
             if raw:
@@ -288,6 +288,12 @@ async def _execute_grassvision_tool(
                         f"{c['color']}（{c['share'] * 100:.0f}%）" for c in colors
                     )
                     result = f"{result}\n\n【该区域主色】{color_txt}"
+                # 图元识别：圆形/矩形/线段/多边形（可编辑 SVG 几何）
+                geo = PT.trace_region(raw, region=args.get("region"))
+                if geo.get("shapes"):
+                    shapes_desc = "；".join(s.get("description", "") for s in geo["shapes"][:4])
+                    if shapes_desc:
+                        result = f"{result}\n\n【该区域图元】{shapes_desc}"
         except Exception:
             pass
         return result

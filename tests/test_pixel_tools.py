@@ -6,7 +6,7 @@ import json
 
 import pytest
 from unittest.mock import patch
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from app import pixel_tools as PT
 from app.config import get_config
@@ -291,4 +291,109 @@ class TestAutoPixelInjectStreaming:
         finally:
             cfg.image.auto_pixel_inject = old_inj
             cfg.image.stream_vision_thinking = old_s
+            asyncio.run(_clear.clear())
+
+
+class TestShapeRecognition:
+    """图元识别：已知形状图 → 正确 SVG 图元。"""
+
+    @staticmethod
+    def _make_shapes_img():
+        img = Image.new("RGB", (360, 220), (255, 255, 255))
+        d = ImageDraw.Draw(img)
+        d.ellipse((20, 20, 80, 80), fill=(37, 99, 235))
+        d.rectangle((120, 30, 200, 70), fill=(37, 99, 235))
+        d.line((30, 200, 330, 200), fill=(37, 99, 235), width=4)
+        d.polygon([(260, 40), (320, 40), (290, 90)], fill=(37, 99, 235))
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+
+    def test_recognizes_all_primitives(self):
+        raw = self._make_shapes_img()
+        r = PT.trace_region(raw)
+        types = [s["type"] for s in r.get("shapes", [])]
+        assert "circle" in types, f"应识别圆，实际 {types}"
+        assert "rect" in types, f"应识别矩形，实际 {types}"
+        assert "line" in types, f"应识别线，实际 {types}"
+        assert "polygon" in types, f"应识别多边形，实际 {types}"
+
+    def test_circle_geometry_accurate(self):
+        raw = self._make_shapes_img()
+        r = PT.trace_region(raw)
+        circle = next(s for s in r["shapes"] if s["type"] == "circle")
+        assert abs(circle["cx"] - 50) <= 3, f"圆心 x 应≈50，实际 {circle['cx']}"
+        assert abs(circle["cy"] - 50) <= 3, f"圆心 y 应≈50，实际 {circle['cy']}"
+        assert abs(circle["r"] - 30) <= 3, f"半径应≈30，实际 {circle['r']}"
+
+    def test_svg_contains_primitives(self):
+        raw = self._make_shapes_img()
+        r = PT.trace_region(raw)
+        svg = r.get("svg", "")
+        assert "<circle " in svg
+        assert "<rect " in svg
+        assert "<line " in svg
+        assert "<polygon " in svg or "<polyline " in svg
+
+    def test_description_text(self):
+        raw = self._make_shapes_img()
+        r = PT.trace_region(raw)
+        desc = r.get("description", "")
+        assert "圆形" in desc and "矩形" in desc and "线段" in desc, f"描述应含图元摘要，实际 {desc}"
+
+    def test_reexamine_includes_geometry(self):
+        """重看增强：view_image 返回自动附主色 + 图元几何。"""
+        from app.proxy import handle_chat_completion
+        from app.config import get_config
+        from app.image_cache import get_image_cache
+        _clear = get_image_cache()
+        asyncio.run(_clear.clear())
+        cfg = get_config()
+        old_r = cfg.image.vision_reexamine
+        cfg.image.vision_reexamine = True
+        try:
+            raw = self._make_shapes_img()
+            b64 = base64.b64encode(raw).decode()
+            request = ChatCompletionRequest(
+                model="openai-vision",
+                messages=[ChatMessage(role="user", content=[
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
+                    {"type": "text", "text": "这张图的形状?"},
+                ])],
+                stream=False,
+            )
+            class _ToolSource:
+                def __init__(self):
+                    self.bodies = []
+                    self.calls = 0
+
+                async def post(self, url, json=None):
+                    self.bodies.append(json)
+                    self.calls += 1
+                    if self.calls == 1:
+                        return _FakeResp2(200, {"choices": [{"message": {
+                            "role": "assistant", "content": None,
+                            "tool_calls": [{"id": "c1", "type": "function", "function": {
+                                "name": "grassvision_view_image",
+                                "arguments": '{"question":"形状","region":"0,0,1000,1000"}'}}],
+                        }}], "usage": {}})
+                    return _FakeResp2(200, {"choices": [{"message": {"role": "assistant", "content": "有圆和矩形。"}}], "usage": {}})
+
+                async def aclose(self):
+                    pass
+
+            source = _ToolSource()
+            vision = _FakeVisionClient2()
+            with patch("app.vision.get_vision_client", return_value=vision), \
+                 patch("app.proxy.get_source_client", return_value=source):
+                resp = asyncio.run(handle_chat_completion(request, type("R", (), {})()))
+            import json as _json
+            data = _json.loads(resp.body)
+            assert data["choices"][0]["message"]["content"] == "有圆和矩形。"
+            tool_msgs = [m for m in source.bodies[1]["messages"] if m.get("role") == "tool"]
+            content = tool_msgs[0]["content"] if tool_msgs else ""
+            assert "主色" in content, f"重看应附主色，实际 {content[:100]}"
+            assert "图元" in content and "圆形" in content, f"重看应附图元几何，实际 {content[:150]}"
+        finally:
+            cfg.image.vision_reexamine = old_r
             asyncio.run(_clear.clear())
