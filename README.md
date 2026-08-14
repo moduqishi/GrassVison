@@ -28,7 +28,7 @@
 | 对比项 | 原版界面 | 复刻成品 | AI 复刻过程 |
 |---|---|---|---|
 | **界面预览** | <img src="assets/replica-original.png" width="320" alt="原版界面"> | <img src="assets/replica-result.png" width="320" alt="复刻成品"> | <img src="assets/replica-process.png" width="320" alt="AI 复刻过程"> |
-| 界面 | DeepSeek 桌面应用（2560×1440） | 纯 HTML/CSS 构建 | 上下文注入 → 思考 → Bash |
+| 界面 | CherryStudio 客户端（deepseek-v4-flash-vision 模型） | 纯 HTML/CSS 构建 | 上下文注入 → 思考 → Bash |
 | 主题 | 深色主题 AI 对话界面 | 深色主题 · 逐像素对照还原 | 任务清单 **5/5 完成** |
 | 布局 | 左侧话题栏 + 右侧对话区 + 输入工具栏 | 话题栏 / 聊天区 / 输入工具栏**完整复刻** | 全流程耗时 **4m42s** |
 | 结果 | — | **100% 布局还原 · 0px 像素偏差** | **全流程零人工干预** |

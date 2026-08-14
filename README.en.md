@@ -36,7 +36,7 @@ geometry available by default, with zero client awareness.
 | Aspect | Original UI | Replica | AI process |
 |---|---|---|---|
 | **Preview** | <img src="assets/replica-original.png" width="320" alt="Original UI"> | <img src="assets/replica-result.png" width="320" alt="Replica"> | <img src="assets/replica-process.png" width="320" alt="AI process"> |
-| Interface | DeepSeek desktop app (2560×1440) | pure HTML/CSS | context inject → think → bash |
+| Interface | CherryStudio client (deepseek-v4-flash-vision model) | pure HTML/CSS | context inject → think → bash |
 | Theme | dark AI chat UI | dark theme · pixel-matched | task list **5/5 done** |
 | Layout | sidebar + chat + input toolbar | sidebar / chat / toolbar **fully replicated** | total **4m42s** |
 | Result | — | **100% layout fidelity · 0px deviation** | **zero human intervention** |
