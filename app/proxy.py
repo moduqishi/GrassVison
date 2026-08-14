@@ -49,30 +49,103 @@ _VIEW_IMAGE_TOOL = {
     },
 }
 
-# 服务端重看最大轮数（一次请求内模型最多自主重看几次）
-MAX_REEXAMINE_ROUNDS = 3
+# 本地确定性像素工具（服务端执行，不依赖视觉模型，数值精确）
+_PIXEL_COLORS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "grassvision_pixel_colors",
+        "description": (
+            "精确获取图片区域的主色调（本地像素算法，返回 #RRGGBB 色值与占比）。"
+            "当需要准确的色值（如按钮/背景/图表的精确颜色）而不是大致描述时使用。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "region": {"type": "string", "description": "可选，0-1000 归一化区域 x1,y1,x2,y2"},
+                "candidates": {"type": "array", "items": {"type": "string"},
+                               "description": "可选，候选色值列表（如 #F3F4F6），返回其中最接近的"},
+            },
+        },
+    },
+}
+
+_PIXEL_DIFF_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "grassvision_pixel_diff",
+        "description": (
+            "精确对比图片中两个区域的像素差异（差异百分比 + 最差区域坐标）。"
+            "用于判断两处是否一致、找不同、验证改版对齐。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "region_a": {"type": "string", "description": "0-1000 归一化区域 x1,y1,x2,y2"},
+                "region_b": {"type": "string", "description": "0-1000 归一化区域 x1,y1,x2,y2"},
+            },
+            "required": ["region_a", "region_b"],
+        },
+    },
+}
+
+_PIXEL_TRACE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "grassvision_trace",
+        "description": (
+            "精确提取图片区域的几何信息（前景包围盒像素坐标、宽高、占比、主色、边缘轨迹SVG）。"
+            "当需要准确的尺寸/形状/几何关系时使用。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "region": {"type": "string", "description": "可选，0-1000 归一化区域 x1,y1,x2,y2"},
+            },
+        },
+    },
+}
+
+_GRASSVISION_TOOL_NAMES = (
+    "grassvision_view_image",
+    "grassvision_pixel_colors",
+    "grassvision_pixel_diff",
+    "grassvision_trace",
+)
 
 
-def _inject_view_image_tool(body: dict) -> dict:
-    """把 grassvision_view_image 工具注入请求（客户端未传 tools 时新建列表）。"""
+def _is_grassvision_tool(name: str) -> bool:
+    return name in _GRASSVISION_TOOL_NAMES
+
+
+def _inject_grassvision_tools(body: dict, reexamine: bool, pixel_tools: bool) -> dict:
+    """注入 GrassVision 服务端工具（按开关）：view_image（重看）+ 像素工具。"""
     tools = list(body.get("tools") or [])
-    for t in tools:
-        if isinstance(t, dict) and t.get("type") == "function" \
-                and t.get("function", {}).get("name") == "grassvision_view_image":
-            return body
-    tools.append(_VIEW_IMAGE_TOOL)
+    existing = {
+        t.get("function", {}).get("name") for t in tools
+        if isinstance(t, dict) and t.get("type") == "function"
+    }
+    if reexamine and "grassvision_view_image" not in existing:
+        tools.append(_VIEW_IMAGE_TOOL)
+    if pixel_tools:
+        for tool in (_PIXEL_COLORS_TOOL, _PIXEL_DIFF_TOOL, _PIXEL_TRACE_TOOL):
+            if tool["function"]["name"] not in existing:
+                tools.append(tool)
     return {**body, "tools": tools}
 
 
-def _strip_view_image_tool(body: dict) -> dict:
-    """移除注入的 view_image 工具（客户端原有工具保留）；没有剩余工具时去掉 tools 键。"""
+def _strip_grassvision_tools(body: dict) -> dict:
+    """移除所有 grassvision_* 工具（客户端原有工具保留）；无剩余工具时去掉 tools 键。"""
     tools = [
         t for t in (body.get("tools") or [])
-        if not (isinstance(t, dict) and t.get("function", {}).get("name") == "grassvision_view_image")
+        if not (isinstance(t, dict)
+                and _is_grassvision_tool(t.get("function", {}).get("name", "")))
     ]
     if not tools:
         return {k: v for k, v in body.items() if k != "tools"}
     return {**body, "tools": tools}
+
+# 服务端重看最大轮数（一次请求内模型最多自主重看几次）
+MAX_REEXAMINE_ROUNDS = 3
 
 
 def _collect_tool_calls(tool_deltas: list[dict]) -> list[dict]:
@@ -112,6 +185,91 @@ def _accum_usage(target: dict, usage: dict | None) -> None:
             target[k] = target.get(k, 0) + v
 
 
+async def _resolve_image_raw(url: str, request_client) -> bytes | None:
+    """从图片 URL（data URL 或 http）解析原始字节，供本地像素工具使用。"""
+    import base64 as _b64
+    try:
+        from app.image_utils import DATA_URL_RE as _DURL
+        m = _DURL.match(url)
+        if m:
+            return _b64.b64decode(m.group(2))
+        from app.image_utils import fetch_image_bytes
+        return await fetch_image_bytes(url, request_client)
+    except Exception:
+        return None
+
+
+async def _execute_grassvision_tool(
+    tc: dict,
+    images: list,
+    model: EnhancedModelConfig,
+    raw_request: Request,
+    usage_accumulator: dict | None = None,
+) -> str:
+    """服务端执行 grassvision_* 工具（重看 / 本地像素工具），返回给源模型的 tool 结果文本。"""
+    from app import pixel_tools as PT
+
+    name = tc.get("function", {}).get("name", "")
+    try:
+        args = json.loads(tc.get("function", {}).get("arguments") or "{}")
+    except json.JSONDecodeError:
+        args = {}
+    if not images:
+        return "[当前没有可重看的图片]"
+    url = images[0].url
+
+    if name == "grassvision_view_image":
+        return await reexamine_image(
+            url, str(args.get("question", "") or ""), args.get("region"),
+            model, getattr(raw_request, "_httpx_client", None),
+            usage_accumulator=usage_accumulator,
+        )
+
+    # 本地像素工具（确定性算法）
+    raw = await _resolve_image_raw(url, getattr(raw_request, "_httpx_client", None))
+    if raw is None:
+        return "[图片解析失败]"
+
+    if name == "grassvision_pixel_colors":
+        colors = PT.dominant_colors(
+            raw, region=args.get("region"),
+            candidates=args.get("candidates"),
+        )
+        lines = []
+        for c in colors:
+            share = c.get("share")
+            if c.get("matched"):
+                lines.append(f"- {c['color']}（候选匹配）")
+            else:
+                lines.append(f"- {c['color']} 占比 {share * 100:.1f}%")
+        return "区域主色调：\n" + "\n".join(lines) if lines else "[未提取到颜色]"
+
+    if name == "grassvision_pixel_diff":
+        result = PT.pixel_diff(raw, str(args.get("region_a", "")), str(args.get("region_b", "")))
+        if "error" in result:
+            return f"[{result['error']}]"
+        box = result.get("worst_region")
+        box_txt = f"（0-1000 归一化 {box}）" if box else ""
+        return (
+            f"两区域像素差异：{result['diff_percent']}%"
+            f"，平均通道差 {result['mean_diff']}"
+            f"，最差子区域差异 {result['worst_share']}% {box_txt}"
+        )
+
+    if name == "grassvision_trace":
+        geo = PT.trace_region(raw, region=args.get("region"))
+        if "error" in geo:
+            return f"[{geo['error']}]"
+        box = geo.get("foreground_box_px")
+        return (
+            f"前景几何（原图像素坐标）：包围盒 {box}，宽 {geo.get('width')}px 高 {geo.get('height')}px，"
+            f"前景占比 {geo.get('coverage')}，主色 {geo.get('dominant_color')}\n"
+            f"边缘轨迹 SVG（原图坐标）：\n{geo.get('svg')}"
+        )
+
+    return f"[未知工具 {name}]"
+
+
 async def _forward_with_reexamine(
     body: dict,
     provider_key: str,
@@ -139,7 +297,7 @@ async def _forward_with_reexamine(
         _accum_usage(agg_source, usage)
         # 上游可能不支持 tools 字段（400/422）→ 自动回退为无工具请求重试一次
         if resp.status_code in (400, 422) and body_plain is None and body.get("tools"):
-            body_plain = _strip_view_image_tool(body)
+            body_plain = _strip_grassvision_tools(body)
             body = body_plain
             resp, usage = await _forward_to_source(
                 body, provider_key, public_model_id, stream=False,
@@ -151,11 +309,11 @@ async def _forward_with_reexamine(
             return resp, agg_source, agg_vision
         msg = (data.get("choices") or [{}])[0].get("message") or {}
         tool_calls = msg.get("tool_calls") or []
-        view_calls = [
+        gv_calls = [
             tc for tc in tool_calls
-            if isinstance(tc, dict) and tc.get("function", {}).get("name") == "grassvision_view_image"
+            if isinstance(tc, dict) and _is_grassvision_tool(tc.get("function", {}).get("name", ""))
         ]
-        if not view_calls:
+        if not gv_calls:
             return resp, agg_source, agg_vision
 
         if _round >= MAX_REEXAMINE_ROUNDS:
@@ -164,45 +322,28 @@ async def _forward_with_reexamine(
             body["messages"] = list(body.get("messages") or []) + [msg]
             body["messages"].append({
                 "role": "tool",
-                "tool_call_id": (view_calls[0].get("id") if view_calls else "call_none"),
-                "content": "[已达到重看次数上限，无法继续查看图片；请基于已有的图片分析信息直接回答用户。]",
+                "tool_call_id": (gv_calls[0].get("id") if gv_calls else "call_none"),
+                "content": "[已达到工具调用次数上限，无法继续；请基于已有的图片分析信息直接回答用户。]",
             })
-            body["tools"] = [
-                t for t in (body.get("tools") or [])
-                if not (isinstance(t, dict) and t.get("function", {}).get("name") == "grassvision_view_image")
-            ]
+            body = _strip_grassvision_tools(body)
             resp, usage = await _forward_to_source(
                 body, provider_key, public_model_id, stream=False,
             )
             _accum_usage(agg_source, usage)
             return resp, agg_source, agg_vision
 
-        # 服务端执行重看：把 assistant 消息（含 tool_calls）与 tool 结果追加进对话再转发
+        # 服务端执行 grassvision_* 工具：把 assistant 消息（含 tool_calls）与
+        # 工具结果追加进对话再转发（客户端无感知）
         body["messages"] = list(body.get("messages") or []) + [msg]
-        for tc in view_calls:
+        for tc in gv_calls:
             try:
-                args = json.loads(tc.get("function", {}).get("arguments") or "{}")
-            except json.JSONDecodeError:
-                args = {}
-            question = str(args.get("question", "") or "")
-            region = args.get("region")
-            tool_call_id = tc.get("id")
-            if not images:
-                body["messages"].append({
-                    "role": "tool", "tool_call_id": tool_call_id,
-                    "content": "[当前没有可重看的图片]",
-                })
-                continue
-            try:
-                result_text = await reexamine_image(
-                    images[0].url, question, region, model,
-                    getattr(raw_request, "_httpx_client", None),
-                    usage_accumulator=agg_vision,
+                result_text = await _execute_grassvision_tool(
+                    tc, images, model, raw_request, usage_accumulator=agg_vision,
                 )
             except Exception as e:
-                result_text = f"[重看失败: {e}]"
+                result_text = f"[工具执行失败: {e}]"
             body["messages"].append({
-                "role": "tool", "tool_call_id": tool_call_id, "content": result_text,
+                "role": "tool", "tool_call_id": tc.get("id"), "content": result_text,
             })
     return resp, agg_source, agg_vision
 
@@ -261,7 +402,7 @@ async def _stream_with_reexamine(
                         # 上游不支持 tools → 回退无工具重试一次
                         if not plain_retried and body.get("tools"):
                             plain_retried = True
-                            body = _strip_view_image_tool(body)
+                            body = _strip_grassvision_tools(body)
                             continue
                         err_frame = json.dumps({'error': {'message': error_body, 'type': 'upstream_error', 'code': resp.status_code}})
                         yield f"data: {err_frame}" + "\n\n"
@@ -293,7 +434,7 @@ async def _stream_with_reexamine(
                                         (tc.get("function") or {}).get("name") or ""
                                         for tc in tcs if isinstance(tc, dict)
                                     ]
-                                    if any(n == "grassvision_view_image" for n in names):
+                                    if any(_is_grassvision_tool(n) for n in names):
                                         mode = "swallow"
                                     # 客户端自己的工具：保持 forward 正常转发
                                 if mode == "swallow":
@@ -326,43 +467,44 @@ async def _stream_with_reexamine(
             if mode == "forward":
                 return  # 正常转发完成（含客户端自己的工具透传）
 
-            # ── 吞掉了 view_image 工具轮：执行服务端重看 ──
+            # ── 吞掉了 grassvision_* 工具轮：服务端执行 ──
             tool_calls = _collect_tool_calls(tool_deltas)
-            view_calls = [
+            gv_calls = [
                 tc for tc in tool_calls
-                if tc.get("function", {}).get("name") == "grassvision_view_image"
+                if _is_grassvision_tool(tc.get("function", {}).get("name", ""))
             ]
-            if not view_calls:
+            if not gv_calls:
                 return
             assistant_msg = _assistant_msg_with_tool_calls(tool_calls)
             body["messages"] = list(body.get("messages") or []) + [assistant_msg]
 
             if _round >= MAX_REEXAMINE_ROUNDS:
                 # 达到上限：移除工具 + 说明，强制下一轮直接回答
-                body = _strip_view_image_tool(body)
+                body = _strip_grassvision_tools(body)
                 body["messages"].append({
                     "role": "tool",
-                    "tool_call_id": view_calls[0].get("id", "call_none"),
-                    "content": "[已达到重看次数上限，无法继续查看图片；请基于已有的图片分析信息直接回答用户。]",
+                    "tool_call_id": gv_calls[0].get("id", "call_none"),
+                    "content": "[已达到工具调用次数上限，无法继续；请基于已有的图片分析信息直接回答用户。]",
                 })
                 continue
 
-            for tc in view_calls:
-                try:
-                    args = json.loads(tc.get("function", {}).get("arguments") or "{}")
-                except json.JSONDecodeError:
-                    args = {}
-                question = str(args.get("question", "") or "")
-                region = args.get("region")
+            for tc in gv_calls:
                 if not images:
                     body["messages"].append({
                         "role": "tool", "tool_call_id": tc.get("id"),
-                        "content": "[当前没有可重看的图片]",
+                        "content": "[当前没有可用的图片]",
                     })
                     continue
                 try:
-                    if stream_vision:
+                    name = tc.get("function", {}).get("name", "")
+                    if stream_vision and name == "grassvision_view_image":
                         # 融合版：重看的视觉增量实时推给客户端（reasoning_content 帧）
+                        try:
+                            args = json.loads(tc.get("function", {}).get("arguments") or "{}")
+                        except json.JSONDecodeError:
+                            args = {}
+                        question = str(args.get("question", "") or "")
+                        region = args.get("region")
                         vq: asyncio.Queue = asyncio.Queue()
 
                         async def _vemit(kind: str, text: str) -> None:
@@ -390,13 +532,11 @@ async def _stream_with_reexamine(
                             yield vframe
                         result_text = await vtask
                     else:
-                        result_text = await reexamine_image(
-                            images[0].url, question, region, model,
-                            getattr(raw_request, "_httpx_client", None),
-                            usage_accumulator=agg_vision,
+                        result_text = await _execute_grassvision_tool(
+                            tc, images, model, raw_request, usage_accumulator=agg_vision,
                         )
                 except Exception as e:
-                    result_text = f"[重看失败: {e}]"
+                    result_text = f"[工具执行失败: {e}]"
                 body["messages"].append({
                     "role": "tool", "tool_call_id": tc.get("id"), "content": result_text,
                 })
@@ -607,7 +747,7 @@ async def handle_chat_completion(
             else:
                 stripped = inject_image_descriptions(messages_raw, {})
         # 无当前图片但开启重看：注入通道说明（引导模型怀疑描述、主动重看历史图）
-        if model.vision_enabled and cfg.image.vision_reexamine and cfg.image.vision_channel_note:
+        if model.vision_enabled and (cfg.image.vision_reexamine or cfg.image.pixel_tools) and cfg.image.vision_channel_note:
             stripped = _inject_channel_note(stripped)
         body = _build_source_body(request, model, stripped)
         if request.stream:
@@ -618,10 +758,10 @@ async def handle_chat_completion(
                     vision_used=False, vision_success=False,
                     source_tokens=usage,
                 )
-            if model.vision_enabled and cfg.image.vision_reexamine:
+            if model.vision_enabled and (cfg.image.vision_reexamine or cfg.image.pixel_tools):
                 # 无图流式：注入工具，允许源模型重看历史图片（跨轮次无感重看）。
                 # stream_vision=True：跨轮重看的思考链也始终流式透传。
-                body = _inject_view_image_tool(body)
+                body = _inject_grassvision_tools(body, cfg.image.vision_reexamine, cfg.image.pixel_tools)
                 return StreamingResponse(
                     _stream_with_reexamine(
                         body=body,
@@ -645,9 +785,9 @@ async def handle_chat_completion(
             )
         else:
             noimg_vision_usage: dict | None = None
-            if model.vision_enabled and cfg.image.vision_reexamine:
+            if model.vision_enabled and (cfg.image.vision_reexamine or cfg.image.pixel_tools):
                 # 无图非流式：注入工具，源模型可重看历史图片（跨轮次无感重看）
-                body = _inject_view_image_tool(body)
+                body = _inject_grassvision_tools(body, cfg.image.vision_reexamine, cfg.image.pixel_tools)
                 resp, source_usage, reexam_vision = await _forward_with_reexamine(
                     body=body,
                     provider_key=model.source_provider,
@@ -681,7 +821,7 @@ async def handle_chat_completion(
     # ── 2.5 融合流式：视觉思考（可选）+ 源模型流（含服务端重看）──
     # 统一入口：stream_vision_thinking 或 vision_reexamine 任一开启即走融合流，
     # 二者可自由组合（不再二选一）。
-    if request.stream and (cfg.image.stream_vision_thinking or cfg.image.vision_reexamine):
+    if request.stream and (cfg.image.stream_vision_thinking or cfg.image.vision_reexamine or cfg.image.pixel_tools):
         return StreamingResponse(
             _combined_stream(
                 request=request,
@@ -806,9 +946,9 @@ async def handle_chat_completion(
             extra_usage=_vision_usage_extra(vision_usage),
         )
     else:
-        if cfg.image.vision_reexamine:
-            # 协议化服务端重看：注入工具 + 拦截 tool_call 在服务端执行（客户端无感知）
-            body = _inject_view_image_tool(body)
+        if cfg.image.vision_reexamine or cfg.image.pixel_tools:
+            # 协议化服务端工具：注入工具 + 拦截 tool_call 在服务端执行（客户端无感知）
+            body = _inject_grassvision_tools(body, cfg.image.vision_reexamine, cfg.image.pixel_tools)
             resp, source_usage, reexam_vision = await _forward_with_reexamine(
                 body=body,
                 provider_key=model.source_provider,
@@ -1039,11 +1179,11 @@ async def _combined_stream(
             source_tokens=usage,
         )
 
-    if cfg.image.vision_reexamine:
+    if cfg.image.vision_reexamine or cfg.image.pixel_tools:
         # 融合版阶段 2：源模型流 + 服务端重看（工具轮吞掉、重看增量流式推送）。
         # stream_vision 恒 True：重看是"源模型主动再看一眼"的过程，思考链始终透传，
         # 不依赖首次视觉思考开关（stream_vision_thinking 只控制阶段 1 的可视化）。
-        body = _inject_view_image_tool(body)
+        body = _inject_grassvision_tools(body, cfg.image.vision_reexamine, cfg.image.pixel_tools)
         async for line in _stream_with_reexamine(
             body=body,
             provider_key=model.source_provider,

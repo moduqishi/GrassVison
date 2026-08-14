@@ -107,6 +107,8 @@ class ImageConfig(BaseModel):
     vision_reexamine: bool = False
     # 结构化证据输出：视觉模型返回 JSON 证据，解析校验后格式化注入（不确定项单独标注）
     structured_evidence: bool = False
+    # 本地像素工具（服务端无感）：精确色值/像素差异/几何矢量化，源模型可调、服务端执行
+    pixel_tools: bool = False
     vision_cache: VisionCacheConfig = Field(default_factory=VisionCacheConfig)
 
 

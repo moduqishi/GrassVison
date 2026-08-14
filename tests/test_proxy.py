@@ -1235,7 +1235,7 @@ class TestStreamReexamine:
 
     def test_client_own_tools_passthrough(self):
         """客户端自己的工具调用应原样透传（不影响 harness 自带工具）。"""
-        from app.proxy import _collect_tool_calls, _assistant_msg_with_tool_calls, _strip_view_image_tool
+        from app.proxy import _collect_tool_calls, _assistant_msg_with_tool_calls, _strip_grassvision_tools
         deltas = [
             {"index": 0, "id": "c1", "type": "function", "function": {"name": "browse", "arguments": ""}},
             {"index": 0, "function": {"arguments": "{\"url\":\"x\"}"}},
@@ -1247,7 +1247,7 @@ class TestStreamReexamine:
         # 移除注入工具不影响客户端工具
         body = {"tools": [{"type": "function", "function": {"name": "browse"}},
                           {"type": "function", "function": {"name": "grassvision_view_image"}}]}
-        stripped = _strip_view_image_tool(body)
+        stripped = _strip_grassvision_tools(body)
         names = [t["function"]["name"] for t in stripped["tools"]]
         assert names == ["browse"]
 

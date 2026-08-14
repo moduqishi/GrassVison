@@ -107,6 +107,8 @@ image:
   vision_reexamine: false
   # 结构化证据输出：视觉模型返回 JSON 证据，格式化注入（不确定项单独标注）
   structured_evidence: false
+  # 本地像素工具（服务端无感）：精确色值/像素差异/几何矢量化（grassvision_pixel_* 工具）
+  pixel_tools: false
   vision_cache:
     enabled: true
     ttl_seconds: 3600

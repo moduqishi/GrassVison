@@ -52,6 +52,7 @@
 | 🔁 **协议化服务端重看** | `image.vision_reexamine`（系统设置）：注入 `view_image` 工具，源模型描述不足时自主调用，**服务端用请求内图片重新分析**（含跨轮次历史图，无需用户重发、客户端无感知） |
 | 🎯 **定位-放大-再读** | `image.grounding_zoom`（系统设置）：坐标框 + 本地裁剪放大二次精读 |
 | 📋 **结构化证据** | `image.structured_evidence`（系统设置）：摘要/全文/版面/实体 JSON，**不确定项单独标注**防幻觉 |
+| 🎨 **本地像素工具** | `image.pixel_tools`（系统设置）：精确色值 / 像素差异 / 几何矢量化（`grassvision_pixel_*`），**本地确定性算法**、源模型可调、服务端无感执行 |
 | 🔍 **问题感知缓存** | `question_aware_cache`：用户问题直达视觉模型，缓存键随问题变化 |
 | 💬 **多轮追问** | `reuse_historical_cache`：历史图片缓存描述原地注入，追问不丢上下文 |
 | 🖼️ **多图联合对比** | `multi_image_mode: auto` 检测对比意图一次调用多图，`combined` 总是联合 |
@@ -132,6 +133,7 @@ image:
   vision_reexamine: true              # 协议化服务端重看（源模型自主再看图）
   grounding_zoom: true                # 定位-放大-再读
   structured_evidence: true           # 结构化证据
+  pixel_tools: true                   # 本地像素工具（精确色值/差异/矢量化）
   reuse_historical_cache: true        # 历史图描述注入（跨轮次可重看）
 ```
 
