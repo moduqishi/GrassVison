@@ -2,15 +2,18 @@
 
 # 🌿 GrassVision
 
-### 给纯文本大模型装上「原生视觉」
+### 给纯文本大模型装上「原生视觉」——体验几乎无差别
 
 把 DeepSeek / GLM 等纯文本大模型，变成**看得见图片**的多模态模型——
-单条 SSE 流 · 真实思考链 · 像素级细节 · OpenAI 兼容零改动接入。
+流式真实思考链 · 跨轮次无感重看 · 像素级精确证据 · 可编辑 SVG 图元 ·
+OpenAI / Anthropic / Responses 三协议零改动接入。
+
+**体验对标原生多模态**：发图即见真实思考 → 追问细节无感重看 → 精确色值/几何默认就有，客户端完全无感知。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-4EAA25.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-82%20passed-22c55e.svg)]()
+[![Tests](https://img.shields.io/badge/tests-128%20passed-22c55e.svg)]()
 [![Vision Providers](https://img.shields.io/badge/vision%20channels-3%20%E6%94%AF%E6%8C%81-8b5cf6.svg)]()
-[![Compatible](https://img.shields.io/badge/API-OpenAI%20Compatible-3b82f6.svg)]()
+[![API](https://img.shields.io/badge/API-Chat%20%2B%20Anthropic%20%2B%20Responses-3b82f6.svg)]()
 [![Chinese](https://img.shields.io/badge/lang-%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87-0ea5e9.svg)]()
 
 </div>
@@ -25,7 +28,24 @@
 
 ---
 
-## ✨ 接近原生多模态的流式体验
+## 🎯 体验对标原生：差在哪，我们就补在哪
+
+原生多模态"能看图、能追问、能抠细节"——GrassVision 在**用户可感知的每一个维度**上都对齐：
+
+| 原生体验 | GrassVision 的对齐方式 |
+|---|---|
+| 发图后立即"看懂" | **流式真实思考链**：视觉推理 → 源模型思考 → 回答，单条 SSE 流无缝衔接，首帧即真实内容 |
+| 追问"那里是什么"（像素常驻上下文） | **跨轮次无感重看**：第二轮纯文字追问，服务端用上下文图片重新分析，客户端零感知、无需重发 |
+| "这个按钮什么颜色" | **像素证据自动注入**：首次分析就附精确 `#RRGGBB` 主色，不依赖模型调工具 |
+| "图标是什么形状" | **图元识别**：本地确定性算法输出可编辑 SVG（圆/矩形/线段/多边形），几何参数精确 |
+| "改完和设计稿差在哪" | **UI 还原闭环**：服务端渲染 HTML → 像素对比 → 定位差异区域 → 迭代 |
+| 任何客户端都能用 | **三协议**：OpenAI Chat / Anthropic Messages / Responses，同一核心管线 |
+
+**关键**：这一切都发生在**服务端**——客户端、源模型都无感知，体验上就是"这个模型本来就能看图"。
+
+---
+
+## ✨ 流式真实思考链（体验核心）
 
 <img src="assets/streaming-thinking.png" alt="流式真实思考链" width="100%"/>
 
@@ -48,14 +68,14 @@
 
 | 能力 | 说明 |
 |---|---|
-| 🧠 **流式真实思考链** | 视觉推理 + 源模型思考链单流透传，首帧即真实内容 |
+| 🧠 **流式真实思考链** | 视觉推理 → 源模型思考 → 重看思考② → 回答，单流无缝透传，首帧即真实内容；重看思考链也实时透传（不依赖首次视觉思考开关） |
 | 🔁 **协议化服务端重看** | `image.vision_reexamine`（系统设置）：注入 `view_image` 工具，源模型描述不足时自主调用，**服务端用请求内图片重新分析**（含跨轮次历史图，无需用户重发、客户端无感知） |
 | 🎯 **定位-放大-再读** | `image.grounding_zoom`（系统设置）：坐标框 + 本地裁剪放大二次精读 |
 | 📋 **结构化证据** | `image.structured_evidence`（系统设置）：摘要/全文/版面/实体 JSON，**不确定项单独标注**防幻觉 |
 | 🎨 **本地像素工具** | `image.pixel_tools`（系统设置）：精确色值 / 像素差异 / **图元识别（可编辑 SVG：圆/矩形/线段/多边形）** / HTML渲染对比闭环，**本地确定性算法**、源模型可调、服务端无感执行；重看自动附主色+图元几何 |
 | 🎯 **像素证据自动注入** | `image.auto_pixel_inject`（系统设置）：单图分析自动附主色（精确色值默认就有，不依赖模型调工具） |
 | 🔍 **问题感知缓存** | `question_aware_cache`：用户问题直达视觉模型，缓存键随问题变化 |
-| 💬 **多轮追问** | `reuse_historical_cache`：历史图片缓存描述原地注入，追问不丢上下文 |
+| 💬 **多轮追问 + 跨轮次重看** | `reuse_historical_cache`：历史图片描述注入；纯文字追问可**无感重看历史图**（上下文图片重新分析，客户端零感知） |
 | 🖼️ **多图联合对比** | `multi_image_mode: auto` 检测对比意图一次调用多图，`combined` 总是联合 |
 | ⚡ **多图并发** | `vision_concurrency` 信号量并发分析，默认 4 |
 | 🔄 **渠道故障转移** | `vision_provider_failover`：主渠道失败按序自动切换 |
