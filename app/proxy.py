@@ -428,14 +428,23 @@ _THINKING_GUIDANCE_TEXT = (
 )
 
 # 通道说明：image.vision_channel_note 开启时注入。告诉源模型"收到的是文字分析不是像素"，
-# 细节不足时主动引导用户重发图片（重发会触发带新意图的重新分析），
-# 模拟原生多模态"按需重看"（参考 agent-vision-toolkit 的通道说明设计）。
+# 细节不足时引导按需重看（模拟原生多模态，参考 agent-vision-toolkit 的通道说明设计）。
+# 有工具版（vision_reexamine 开启）：引导调用 grassvision_view_image 工具重新分析；
+# 无工具版（仅开通道说明）：引导用户重新发送图片（重发触发带新意图的重新分析）。
 _CHANNEL_NOTE_TEXT = (
     "重要说明：<grassvision_image_context> 中的图片信息是视觉模型对用户图片的"
     "文字分析，不是图片本身——你看不到像素，而且分析**可能不完整或有遗漏**。\n"
     "如果回答用户问题需要分析中没有的细节（颜色、坐标、小字、图标、表格内容等），"
     "**不要猜测、不要假设分析已覆盖全部内容**；请调用 grassvision_view_image 工具"
     "重新分析图片获取准确信息。仅在无法重新分析时，再请用户重新发送图片。"
+)
+
+_CHANNEL_NOTE_TEXT_NO_TOOL = (
+    "重要说明：<grassvision_image_context> 中的图片信息是视觉模型对用户图片的"
+    "文字分析，不是图片本身——你看不到像素，而且分析**可能不完整或有遗漏**。\n"
+    "如果回答用户问题需要分析中没有的细节（颜色、坐标、小字、图标、表格内容等），"
+    "**不要猜测、不要假设分析已覆盖全部内容**；请明确指出缺失的具体细节，"
+    "并请用户重新发送图片——重发后视觉模型会针对你的具体问题重新分析。"
 )
 
 
@@ -453,8 +462,22 @@ def _inject_thinking_guidance(messages: list[dict]) -> list[dict]:
     return [{"role": "system", "content": guidance}, *messages]
 
 
-def _inject_channel_note(messages: list[dict]) -> list[dict]:
-    """把通道说明追加到已有 system 消息；没有则插入一条（与思考链引导同理）。"""
+def _inject_channel_note(messages: list[dict], with_tool: bool = True) -> list[dict]:
+    """把通道说明追加到已有 system 消息；没有则插入一条（与思考链引导同理）。
+
+    with_tool=True（vision_reexamine 开启）：引导调用重看工具；
+    with_tool=False：引导用户重新发送图片。
+    """
+    note = _CHANNEL_NOTE_TEXT if with_tool else _CHANNEL_NOTE_TEXT_NO_TOOL
+    for i, msg in enumerate(messages):
+        if msg.get("role") == "system":
+            content = msg.get("content")
+            if isinstance(content, str):
+                messages[i] = {**msg, "content": f"{content}\n\n{note}"}
+            else:
+                messages[i] = {"role": "system", "content": note}
+            return messages
+    return [{"role": "system", "content": note}, *messages]
     for i, msg in enumerate(messages):
         if msg.get("role") == "system":
             content = msg.get("content")
@@ -752,7 +775,8 @@ async def handle_chat_completion(
     if cfg.image.thinking_guidance:
         enhanced_messages = _inject_thinking_guidance(enhanced_messages)
     if cfg.image.vision_channel_note:
-        enhanced_messages = _inject_channel_note(enhanced_messages)
+        enhanced_messages = _inject_channel_note(
+            enhanced_messages, with_tool=model.vision_reexamine)
 
     # ── 7. Assert no image_url blocks remain ────────────────────
     assert_no_image_url_blocks(enhanced_messages)
@@ -998,7 +1022,8 @@ async def _combined_stream(
     if cfg.image.thinking_guidance:
         enhanced_messages = _inject_thinking_guidance(enhanced_messages)
     if cfg.image.vision_channel_note:
-        enhanced_messages = _inject_channel_note(enhanced_messages)
+        enhanced_messages = _inject_channel_note(
+            enhanced_messages, with_tool=model.vision_reexamine)
     assert_no_image_url_blocks(enhanced_messages)
 
     body = _build_source_body(request, model, enhanced_messages)

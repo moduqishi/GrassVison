@@ -1392,3 +1392,16 @@ class TestUsageAggregation:
         finally:
             model.vision_reexamine = old
             _clear_image_cache()
+
+
+class TestChannelNoteModes:
+    """通道说明按 reexamine 是否开启动态切换（工具版/重发版）。"""
+
+    def test_channel_note_with_tool_when_reexamine_on(self):
+        from app.proxy import _inject_channel_note, _CHANNEL_NOTE_TEXT, _CHANNEL_NOTE_TEXT_NO_TOOL
+        out = _inject_channel_note([{"role": "system", "content": "base"}], with_tool=True)
+        assert "grassvision_view_image" in out[0]["content"]
+        out2 = _inject_channel_note([{"role": "system", "content": "base"}], with_tool=False)
+        assert "grassvision_view_image" not in out2[0]["content"]
+        assert "重新发送图片" in out2[0]["content"]
+        assert _CHANNEL_NOTE_TEXT != _CHANNEL_NOTE_TEXT_NO_TOOL
