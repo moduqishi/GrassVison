@@ -268,9 +268,16 @@
             <div class="switch-row" style="margin-bottom:0">
                 <div>
                     <div class="switch-label">本地像素工具</div>
-                    <div class="switch-desc">精确色值 / 像素差异 / 几何矢量化工具（grassvision_pixel_*），源模型可调、服务端本地算法执行（不依赖视觉模型）</div>
+                    <div class="switch-desc">精确色值 / 像素差异 / 几何矢量化 / HTML渲染对比（grassvision_pixel_*、ui_diff），源模型可调、服务端本地算法执行（不依赖视觉模型）</div>
                 </div>
                 <label class="switch"><input type="checkbox" x-model="form.image.pixel_tools"><span class="track"></span></label>
+            </div>
+            <div class="switch-row" style="margin-bottom:0">
+                <div>
+                    <div class="switch-label">像素证据自动注入</div>
+                    <div class="switch-desc">单图分析自动附主色（精确色值默认就有，不依赖模型主动调工具）</div>
+                </div>
+                <label class="switch"><input type="checkbox" x-model="form.image.auto_pixel_inject"><span class="track"></span></label>
             </div>
         </div>
     </div>

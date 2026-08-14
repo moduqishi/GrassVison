@@ -109,6 +109,8 @@ class ImageConfig(BaseModel):
     structured_evidence: bool = False
     # 本地像素工具（服务端无感）：精确色值/像素差异/几何矢量化，源模型可调、服务端执行
     pixel_tools: bool = False
+    # 像素证据自动注入：单图分析自动附主色（精确色值默认就有，不依赖模型调工具）
+    auto_pixel_inject: bool = False
     vision_cache: VisionCacheConfig = Field(default_factory=VisionCacheConfig)
 
 

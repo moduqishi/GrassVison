@@ -105,11 +105,34 @@ _PIXEL_TRACE_TOOL = {
     },
 }
 
+_UI_DIFF_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "grassvision_ui_diff",
+        "description": (
+            "把 HTML 渲染成截图并与参考图做像素对比（UI 还原闭环）。"
+            "当你在按参考图（用户提供的界面截图）还原 UI、需要知道渲染结果与参考图的差异时使用。"
+            "返回差异百分比、最差区域坐标与该区域主色，可据此迭代 HTML。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "html": {"type": "string", "description": "要渲染的完整 HTML"},
+                "ref_image_index": {"type": "integer", "description": "参考图在对话图片中的索引，默认 0"},
+                "width": {"type": "integer", "description": "渲染宽度 px，默认 1280"},
+                "height": {"type": "integer", "description": "渲染高度 px，默认 800"},
+            },
+            "required": ["html"],
+        },
+    },
+}
+
 _GRASSVISION_TOOL_NAMES = (
     "grassvision_view_image",
     "grassvision_pixel_colors",
     "grassvision_pixel_diff",
     "grassvision_trace",
+    "grassvision_ui_diff",
 )
 
 
@@ -127,7 +150,7 @@ def _inject_grassvision_tools(body: dict, reexamine: bool, pixel_tools: bool) ->
     if reexamine and "grassvision_view_image" not in existing:
         tools.append(_VIEW_IMAGE_TOOL)
     if pixel_tools:
-        for tool in (_PIXEL_COLORS_TOOL, _PIXEL_DIFF_TOOL, _PIXEL_TRACE_TOOL):
+        for tool in (_PIXEL_COLORS_TOOL, _PIXEL_DIFF_TOOL, _PIXEL_TRACE_TOOL, _UI_DIFF_TOOL):
             if tool["function"]["name"] not in existing:
                 tools.append(tool)
     return {**body, "tools": tools}
@@ -245,15 +268,65 @@ async def _execute_grassvision_tool(
         return "区域主色调：\n" + "\n".join(lines) if lines else "[未提取到颜色]"
 
     if name == "grassvision_pixel_diff":
-        result = PT.pixel_diff(raw, str(args.get("region_a", "")), str(args.get("region_b", "")))
+        # 支持跨图对比：image_index_a / image_index_b（默认 0）
+        idx_a = int(args.get("image_index_a", 0) or 0)
+        idx_b = int(args.get("image_index_b", 0) or 0)
+        raw_a = raw if idx_a == 0 else await _resolve_image_raw(
+            images[idx_a].url if idx_a < len(images) else images[0].url,
+            getattr(raw_request, "_httpx_client", None),
+        )
+        raw_b = raw if idx_b == 0 else await _resolve_image_raw(
+            images[idx_b].url if idx_b < len(images) else images[0].url,
+            getattr(raw_request, "_httpx_client", None),
+        )
+        if raw_a is None or raw_b is None:
+            return "[图片解析失败]"
+        result = PT.pixel_diff_images(
+            raw_a, raw_b,
+            region_a=args.get("region_a"), region_b=args.get("region_b"),
+        )
         if "error" in result:
             return f"[{result['error']}]"
         box = result.get("worst_region")
         box_txt = f"（0-1000 归一化 {box}）" if box else ""
         return (
-            f"两区域像素差异：{result['diff_percent']}%"
+            f"两图像素差异：{result['diff_percent']}%"
             f"，平均通道差 {result['mean_diff']}"
             f"，最差子区域差异 {result['worst_share']}% {box_txt}"
+        )
+
+    if name == "grassvision_ui_diff":
+        # UI 还原闭环：渲染 HTML → 截图 → 与参考图对比
+        try:
+            shot = PT.render_html(
+                str(args.get("html", "") or ""),
+                width=int(args.get("width", 1280) or 1280),
+                height=int(args.get("height", 800) or 800),
+            )
+        except Exception as e:
+            return f"[HTML 渲染失败: {e}]"
+        ref_idx = int(args.get("ref_image_index", 0) or 0)
+        ref_raw = raw if ref_idx == 0 else await _resolve_image_raw(
+            images[ref_idx].url if ref_idx < len(images) else images[0].url,
+            getattr(raw_request, "_httpx_client", None),
+        )
+        if ref_raw is None:
+            return "[参考图解析失败]"
+        result = PT.pixel_diff_images(shot, ref_raw)
+        if "error" in result:
+            return f"[{result['error']}]"
+        box = result.get("worst_region")
+        box_txt = f"（参考图 0-1000 归一化 {box}）" if box else ""
+        worst_colors = ""
+        if box:
+            colors = PT.dominant_colors(ref_raw, ",".join(str(v) for v in box), top=2)
+            worst_colors = "；该区域参考图主色：" + "，".join(
+                f"{c['color']}（{c['share'] * 100:.0f}%）" for c in colors
+            )
+        return (
+            f"渲染结果与参考图差异：{result['diff_percent']}%（平均通道差 {result['mean_diff']}）"
+            f"，最差区域 {box_txt}，最差区域差异 {result['worst_share']}%{worst_colors}\n"
+            f"请据此修改 HTML 后再次调用本工具对比，直到差异收敛。"
         )
 
     if name == "grassvision_trace":

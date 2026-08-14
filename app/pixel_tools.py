@@ -120,35 +120,40 @@ def _match_candidates(img: Image.Image, box, candidates: list[str]) -> list[str]
     return [label for _, label in scored]
 
 
-def pixel_diff(raw_bytes: bytes, region_a: str, region_b: str) -> dict:
-    """对比同一图片两个区域的像素差异。
+def pixel_diff_images(raw_a: bytes, raw_b: bytes,
+                      region_a: str | None = None, region_b: str | None = None) -> dict:
+    """对比两张图（或同图两区域）的像素差异。
 
-    返回 {diff_percent, mean_diff, worst_box(0-1000归一化), sizes}。
+    返回 {diff_percent, mean_diff, worst_box(0-1000归一化,基于A图), sizes}。
     区域尺寸不同时先缩放到同一尺寸再对比。
     """
-    img = _load(raw_bytes)
-    if img is None:
+    img_a = _load(raw_a)
+    img_b = _load(raw_b)
+    if img_a is None or img_b is None:
         return {"error": "图片解析失败"}
-    box_a = _region_box(img, region_a)
-    box_b = _region_box(img, region_b)
-    if not box_a or not box_b:
-        return {"error": "区域无效，需 x1,y1,x2,y2（0-1000 归一化）"}
-    a = _downsample(_crop(img, box_a), 128)
-    b = _downsample(_crop(img, box_b), 128).resize(a.size, Image.LANCZOS)
+    box_a = _region_box(img_a, region_a)
+    box_b = _region_box(img_b, region_b)
+    if region_a and box_a is None:
+        return {"error": "区域 A 无效，需 x1,y1,x2,y2（0-1000 归一化）"}
+    if region_b and box_b is None:
+        return {"error": "区域 B 无效，需 x1,y1,x2,y2（0-1000 归一化）"}
+    crop_a = _crop(img_a, box_a)
+    crop_b = _crop(img_b, box_b)
+    a = _downsample(crop_a, 128)
+    b = _downsample(crop_b, 128).resize(a.size, Image.LANCZOS)
     diff = ImageChops.difference(a, b)
     hist = diff.histogram()
     total_px = a.width * a.height
     # 差异像素 = 任一通道差 > 阈值
     threshold = 24
-    n_diff = sum(
-        hist[i] for i in range(threshold, 256)
-    )
+    n_diff = sum(hist[i] for i in range(threshold, 256))
     diff_percent = round(n_diff / max(1, total_px) * 100, 2)
     mean_diff = round(sum(i * hist[i] for i in range(256)) / max(1, total_px * 3), 2)
 
-    # 分 4x4 块找最差子区域（返回 0-1000 归一化坐标）
+    # 分 4x4 块找最差子区域（基于 A 图 0-1000 归一化坐标）
     worst = {"share": -1, "box": None}
     bw, bh = max(1, a.width // 4), max(1, a.height // 4)
+    base_box = box_a or (0, 0, img_a.width, img_a.height)
     for gy in range(4):
         for gx in range(4):
             tile = diff.crop((gx * bw, gy * bh, min((gx + 1) * bw, a.width),
@@ -157,13 +162,12 @@ def pixel_diff(raw_bytes: bytes, region_a: str, region_b: str) -> dict:
             share = sum(th[threshold:]) / max(1, tile.width * tile.height)
             if share > worst["share"]:
                 worst["share"] = round(share * 100, 1)
-                # 映射回原图 0-1000 坐标
-                x1 = box_a[0] + (box_a[2] - box_a[0]) * (gx * bw) / a.width
-                y1 = box_a[1] + (box_a[3] - box_a[1]) * (gy * bh) / a.height
-                x2 = box_a[0] + (box_a[2] - box_a[0]) * (min((gx + 1) * bw, a.width)) / a.width
-                y2 = box_a[1] + (box_a[3] - box_a[1]) * (min((gy + 1) * bh, a.height)) / a.height
-                worst["box"] = [int(x1 * 1000 / img.width), int(y1 * 1000 / img.height),
-                                int(x2 * 1000 / img.width), int(y2 * 1000 / img.height)]
+                x1 = base_box[0] + (base_box[2] - base_box[0]) * (gx * bw) / a.width
+                y1 = base_box[1] + (base_box[3] - base_box[1]) * (gy * bh) / a.height
+                x2 = base_box[0] + (base_box[2] - base_box[0]) * min((gx + 1) * bw, a.width) / a.width
+                y2 = base_box[1] + (base_box[3] - base_box[1]) * min((gy + 1) * bh, a.height) / a.height
+                worst["box"] = [int(x1 * 1000 / img_a.width), int(y1 * 1000 / img_a.height),
+                                int(x2 * 1000 / img_a.width), int(y2 * 1000 / img_a.height)]
     return {
         "diff_percent": diff_percent,
         "mean_diff": mean_diff,
@@ -171,6 +175,11 @@ def pixel_diff(raw_bytes: bytes, region_a: str, region_b: str) -> dict:
         "worst_share": worst["share"],
         "size": [a.width, a.height],
     }
+
+
+def pixel_diff(raw_bytes: bytes, region_a: str, region_b: str) -> dict:
+    """（兼容旧接口）对比同一图片两个区域的像素差异。"""
+    return pixel_diff_images(raw_bytes, raw_bytes, region_a, region_b)
 
 
 def trace_region(raw_bytes: bytes, region: str | None = None, max_points: int = 200) -> dict:
@@ -248,3 +257,45 @@ def trace_region(raw_bytes: bytes, region: str | None = None, max_points: int = 
         "svg": svg,
         "original_size": list(orig_scale),
     }
+
+def render_html(html: str, width: int = 1280, height: int = 800, wait_ms: int = 300) -> bytes:
+    """用无头 Chrome/Chromium 渲染 HTML，返回 PNG 字节。
+
+    可执行文件探测：环境变量 GRASSVISION_CHROME 优先，其次常见系统路径。
+    容器部署需安装 chromium（见 Dockerfile）。
+    """
+    import os
+    import subprocess
+    import tempfile
+
+    env_chrome = os.environ.get("GRASSVISION_CHROME", "")
+    candidates = [
+        env_chrome,
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+        "/usr/bin/chromium",
+        "/usr/bin/chromium-browser",
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+    ]
+    exe = next((c for c in candidates if c and os.path.exists(c)), None)
+    if not exe:
+        raise RuntimeError("未找到 Chrome/Chromium（可设置 GRASSVISION_CHROME 环境变量）")
+
+    with tempfile.TemporaryDirectory() as d:
+        html_path = os.path.join(d, "page.html")
+        out_path = os.path.join(d, "shot.png")
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write(html or "<html><body></body></html>")
+        cmd = [
+            exe, "--headless", "--disable-gpu", "--hide-scrollbars",
+            f"--window-size={max(64, width)},{max(64, height)}",
+            f"--screenshot={out_path}",
+            f"--virtual-time-budget={max(50, wait_ms)}",
+            f"file://{html_path}",
+        ]
+        result = subprocess.run(cmd, capture_output=True, timeout=40)
+        if result.returncode != 0 or not os.path.exists(out_path):
+            raise RuntimeError(f"Chrome 渲染失败: {result.stderr.decode(errors='replace')[:200]}")
+        with open(out_path, "rb") as f:
+            return f.read()

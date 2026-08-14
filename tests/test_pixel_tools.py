@@ -158,3 +158,75 @@ class _FakeVisionClient2:
 
     async def aclose(self):
         pass
+
+
+class TestCrossImageDiff:
+    def test_two_different_images_diff(self):
+        blue = base64.b64decode(TINY_PNG.split(",", 1)[1])
+        red_raw = base64.b64decode(_make_png((220, 38, 38)).split(",", 1)[1])
+        r = PT.pixel_diff_images(blue, red_raw)
+        assert r["diff_percent"] > 20, f"蓝 vs 红应差异明显，实际 {r}"
+
+    def test_identical_images_zero_diff(self):
+        blue = base64.b64decode(TINY_PNG.split(",", 1)[1])
+        r = PT.pixel_diff_images(blue, blue)
+        assert r["diff_percent"] == 0.0
+
+
+class TestRenderHtml:
+    def test_render_simple_html(self):
+        html = "<html><body style='background:#ff0000'><h1>Hello</h1></body></html>"
+        shot = PT.render_html(html, width=200, height=150)
+        assert shot[:8] == b"\x89PNG\r\n\x1a\n", "应渲染出 PNG"
+        colors = PT.dominant_colors(shot, top=2)
+        assert colors and colors[0]["color"] == "#FF0000", f"背景应为红，实际 {colors}"
+
+
+class TestAutoPixelInject:
+    def test_pixel_evidence_injected(self):
+        from app.proxy import handle_chat_completion
+        from app.config import get_config
+        from app.image_cache import get_image_cache
+        _clear = get_image_cache()
+        asyncio.run(_clear.clear())
+        cfg = get_config()
+        old = cfg.image.auto_pixel_inject
+        cfg.image.auto_pixel_inject = True
+        try:
+            request = ChatCompletionRequest(
+                model="openai-vision",
+                messages=[ChatMessage(role="user", content=[
+                    {"type": "image_url", "image_url": {"url": TINY_PNG}},
+                    {"type": "text", "text": "这张图什么颜色?"},
+                ])],
+                stream=False,
+            )
+            source = _SimpleSource()
+            vision = _FakeVisionClient2()
+            with patch("app.vision.get_vision_client", return_value=vision), \
+                 patch("app.proxy.get_source_client", return_value=source):
+                resp = asyncio.run(handle_chat_completion(request, type("R", (), {})()))
+            import json as _json
+            data = _json.loads(resp.body)
+            content = data["choices"][0]["message"]["content"]
+            assert content == "按钮是蓝色。"
+            # 注入的描述应包含像素证据（精确色值）
+            msgs = source.bodies[0]["messages"]
+            joined = _json.dumps(msgs, ensure_ascii=False)
+            assert "像素证据" in joined, "应自动注入像素证据"
+            assert "#2563EB" in joined, f"注入的色值应精确，实际 {joined[-200:]}"
+        finally:
+            cfg.image.auto_pixel_inject = old
+            asyncio.run(_clear.clear())
+
+
+class _SimpleSource:
+    def __init__(self):
+        self.bodies = []
+
+    async def post(self, url, json=None):
+        self.bodies.append(json)
+        return _FakeResp2(200, {"choices": [{"message": {"role": "assistant", "content": "按钮是蓝色。"}}], "usage": {}})
+
+    async def aclose(self):
+        pass

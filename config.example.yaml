@@ -109,6 +109,8 @@ image:
   structured_evidence: false
   # 本地像素工具（服务端无感）：精确色值/像素差异/几何矢量化（grassvision_pixel_* 工具）
   pixel_tools: false
+  # 像素证据自动注入：单图分析自动附主色（精确色值默认就有）
+  auto_pixel_inject: false
   vision_cache:
     enabled: true
     ttl_seconds: 3600

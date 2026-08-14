@@ -1085,6 +1085,26 @@ async def resolve_image_descriptions(
                     descriptions[pos] = structured
                     structured_used = True
 
+    # ── Phase 3.6: 像素证据自动注入（auto_pixel_inject，仅非流式）──
+    # 对单张当前图片自动做主色分析并追加到描述：精确色值"默认就有"，
+    # 不依赖源模型是否主动调用像素工具（对冲模型不调工具的不确定性）。
+    if stream_queue is None and getattr(cfg.image, "auto_pixel_inject", False):
+        _current_url_set = {img.url for img in images if img.position in allow_analysis_positions}
+        if len(_current_url_set) == 1:
+            _url = next(iter(_current_url_set))
+            if _url in url_to_raw_bytes:
+                try:
+                    from app import pixel_tools as _PT
+                    _colors = _PT.dominant_colors(url_to_raw_bytes[_url], top=4)
+                    if _colors:
+                        _color_txt = "，".join(f"{c['color']}（{c['share'] * 100:.0f}%）" for c in _colors)
+                        _note = f"\n\n【像素证据·主色】{_color_txt}"
+                        for img in images:
+                            if img.position in allow_analysis_positions and img.url == _url:
+                                descriptions[img.position] = (descriptions.get(img.position, "") or "") + _note
+                except Exception:
+                    pass
+
     if stream_queue is not None:
         await stream_queue.put(("done", "", ""))
 
